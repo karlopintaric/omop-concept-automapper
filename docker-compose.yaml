@@ -1,0 +1,45 @@
+name: omop-automapper
+services:
+  postgres-db:
+    image: postgres:17
+    restart: always
+    env_file: .env # Load environment variables from .env file
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./vocabulary:/app/vocabulary # Mount vocabulary directory
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    env_file: .env # Add this line
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    volumes:
+      - ./data:/app/data # Mount for temporary CSV uploads
+      - ./vocabulary:/app/vocabulary # Mount vocabulary directory
+
+volumes:
+  pgdata:
+  qdrant_data:
