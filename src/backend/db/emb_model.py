@@ -5,7 +5,7 @@ import time
 class EmbeddingModel:
     def __init__(self, model: str, dims: int | None = None, num_retries: int = 3):
         self.model = model
-        self.model_name = model  # Add this property for tracking
+        self.model_name = model
         self.client = self._init_client()
         self.dims = dims
         self.num_retries = num_retries

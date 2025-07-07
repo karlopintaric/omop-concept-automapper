@@ -58,22 +58,8 @@ class AutoMapper:
     def auto_map(
         _self,
         source_concept_name: str,
-        drug_specific: bool = False,
         domains: list | str = [],
-        vocabulary_id: str = "",
     ):
-        if drug_specific:
-            matched_concepts = _self.get_similar_concepts(
-                source_concept_name, k=25, vocabulary_id=vocabulary_id, domains=domains
-            )
-
-            if len(matched_concepts) == 0:
-                return
-
-            return _self.rerankers["drug"].select_similar(
-                source_concept_name, matched_concepts
-            )
-
         matched_concepts = _self.get_similar_concepts(
             source_concept_name, domains=domains, k=10
         )
@@ -92,35 +78,20 @@ class AutoMapper:
         _self,
         source_concept_name: str,
         atc7_codes: list = None,
-        drug_specific: bool = False,
         domains: list | str = [],
-        vocabulary_id: str = "",
     ):
         """Auto-map with ATC7 code filtering"""
-        if drug_specific:
-            matched_concepts = _self.get_similar_concepts_with_atc_filter(
-                source_concept_name,
-                atc7_codes=atc7_codes,
-                k=25,
-                vocabulary_id=vocabulary_id,
-                domains=domains,
-            )
-
-            if len(matched_concepts) == 0:
-                return
-
-            return _self.rerankers["drug"].select_similar(
-                source_concept_name, matched_concepts
-            )
-
         matched_concepts = _self.get_similar_concepts_with_atc_filter(
-            source_concept_name, atc7_codes=atc7_codes, domains=domains, k=10
+            source_concept_name,
+            atc7_codes=atc7_codes,
+            k=25,
+            domains=domains,
         )
 
         if len(matched_concepts) == 0:
             return
 
-        return _self.rerankers["concept"].select_similar(
+        return _self.rerankers["drug"].select_similar(
             source_concept_name, matched_concepts
         )
 
@@ -206,7 +177,6 @@ class AutoMapper:
                         mapped_result = self.auto_map_with_atc_filter(
                             source_concept_name,
                             atc7_codes=atc7_codes,
-                            drug_specific=True,
                             domains=target_domains,
                         )
                     else:
@@ -348,50 +318,6 @@ class AutoMapper:
         )
 
         return results
-
-    def get_concepts_by_atc_codes(
-        self,
-        atc7_codes: list,
-        k: int = 100,
-        domains: str | list = [],
-        vocabulary_id: str = "",
-    ):
-        """Get concepts that have specific ATC7 codes"""
-        # Get all concepts with the specified ATC codes
-        results = self.vector_store.search_by_atc_codes(atc7_codes, k)
-
-        # Apply additional filters if specified
-        filtered_results = []
-        for result in results:
-            metadata = result.payload.get("metadata", {})
-
-            # Check domain filter
-            if domains:
-                if isinstance(domains, str):
-                    domains = [domains]
-                if metadata.get("domain_id") not in domains:
-                    continue
-
-            # Check vocabulary filter
-            if vocabulary_id and metadata.get("vocabulary_id") != vocabulary_id:
-                continue
-
-            filtered_results.append(result)
-
-        # Format results
-        formatted_results = []
-        for result in filtered_results:
-            formatted_results.append(
-                {
-                    "score": getattr(
-                        result, "score", 1.0
-                    ),  # Default score for non-vector search
-                    "text": result.payload["text"],
-                    **result.payload["metadata"],
-                }
-            )
-
-        return formatted_results
 
 
 def init_automapper():

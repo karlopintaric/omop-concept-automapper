@@ -8,7 +8,6 @@ from src.backend.db.core import (
     read_query_from_sql_file,
 )
 
-from contextlib import closing
 import math
 import re
 
@@ -40,7 +39,7 @@ def _execute_seed_query(conn):
     query_path = os.path.join(module_dir, "data", "seed.sql")
     seed_query = read_query_from_sql_file(query_path)
 
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         cursor.execute(seed_query)
         conn.commit()
 
@@ -57,7 +56,7 @@ def import_source_concepts(csv_path: str, vocabulary_id: int):
 
     # Insert data in batches
     batch_size = 1000
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         for i in range(0, len(df), batch_size):
             batch = df.iloc[i : i + batch_size]
             values = []
@@ -87,7 +86,7 @@ def import_source_concepts(csv_path: str, vocabulary_id: int):
 
 @st.cache_data
 def get_total_pages(vocabulary_id: int, per_page: int):
-    with closing(conn.cursor()) as c:
+    with conn.cursor() as c:
         c.execute(
             """
             SELECT COUNT(*) 
@@ -106,7 +105,7 @@ def get_total_pages(vocabulary_id: int, per_page: int):
 
 @st.cache_data
 def get_standard_domains():
-    with closing(conn.cursor()) as c:
+    with conn.cursor() as c:
         c.execute(
             """
             SELECT DISTINCT
@@ -128,7 +127,7 @@ def get_standard_domains():
 def get_unmapped_source_concepts(vocabulary_id: int, page: int = 1, per_page: int = 50):
     offset = (page - 1) * per_page
 
-    with closing(conn.cursor()) as c:
+    with conn.cursor() as c:
         c.execute(
             """
             SELECT
@@ -166,7 +165,7 @@ def get_unmapped_source_concepts(vocabulary_id: int, page: int = 1, per_page: in
 
 @st.cache_data(ttl=30)
 def get_unmapped_concepts(vocabulary_id: int):
-    with closing(conn.cursor()) as c:
+    with conn.cursor() as c:
         c.execute(
             """
             SELECT
@@ -196,7 +195,7 @@ def get_unmapped_concepts(vocabulary_id: int):
 
 @st.cache_data(ttl=30)
 def get_mapped_concepts(vocabulary_id: int):
-    with closing(conn.cursor()) as c:
+    with conn.cursor() as c:
         c.execute(
             """
             SELECT
@@ -225,7 +224,7 @@ def get_mapped_concepts(vocabulary_id: int):
 
 
 def map_concepts(mappings: list, is_manual: bool = True):
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         # Get unique source IDs from mappings
         source_ids = list(set([mapping["source_id"] for mapping in mappings]))
 
@@ -282,7 +281,7 @@ def map_concepts(mappings: list, is_manual: bool = True):
 
 def unmap_concepts(source_ids: list):
     """Remove mappings for given source concept IDs"""
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         placeholders = ",".join(["%s" for _ in source_ids])
 
         cursor.execute(
@@ -301,7 +300,7 @@ def unmap_concepts(source_ids: list):
 @st.cache_data
 def get_concept_from_id(concept_id: int):
     """Get concept details by concept ID"""
-    with closing(conn.cursor()) as c:
+    with conn.cursor() as c:
         c.execute(
             """
             SELECT 
@@ -329,7 +328,7 @@ def get_concept_from_id(concept_id: int):
 @st.cache_data(ttl=30)
 def get_embedding_status(table_type: str = "standard_concepts"):
     """Get embedding status for concepts"""
-    with closing(conn.cursor()) as c:
+    with conn.cursor() as c:
         if table_type == "standard_concepts":
             c.execute(
                 """
@@ -408,7 +407,7 @@ def find_atc7_codes_for_drug_concepts():
     """
 
     results = []
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         cursor.execute(atc_query)
         results = cursor.fetchall()
 
@@ -418,7 +417,7 @@ def find_atc7_codes_for_drug_concepts():
 def store_atc7_codes_in_db(atc7_results):
     """Store ATC7 codes for drug concepts in the database"""
 
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         # Clear existing ATC7 data
         cursor.execute("DELETE FROM concept_atc7")
 
@@ -454,7 +453,7 @@ def process_drug_atc7_codes():
 
 def get_atc7_codes_for_concept(concept_id: int):
     """Get ATC7 codes for a specific concept"""
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         cursor.execute(
             "SELECT atc7_codes FROM concept_atc7 WHERE concept_id = %s", (concept_id,)
         )
@@ -482,7 +481,7 @@ def import_vocabulary_with_copy(table_name: str, file_path: str):
     copy_command = f"COPY {table_name} FROM '{file_path}' WITH DELIMITER E'\\t' CSV HEADER QUOTE E'\\b'"
 
     try:
-        with closing(conn.cursor()) as cursor:
+        with conn.cursor() as cursor:
             # Get count before import
             cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
             count_before = cursor.fetchone()[0]
@@ -515,7 +514,7 @@ def import_vocabulary_with_copy(table_name: str, file_path: str):
 
         # Log the error
         try:
-            with closing(conn.cursor()) as cursor:
+            with conn.cursor() as cursor:
                 cursor.execute(
                     """
                     INSERT INTO vocabulary_imports 
@@ -533,7 +532,7 @@ def import_vocabulary_with_copy(table_name: str, file_path: str):
 
 @st.cache_data(ttl=30)
 def get_vocabulary_import_status():
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         cursor.execute("""
             SELECT 
                 table_name,
@@ -558,7 +557,7 @@ def get_vocabulary_table_counts():
     tables = ["concept", "concept_relationship", "concept_ancestor"]
     counts = {}
 
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         for table in tables:
             cursor.execute(f"SELECT COUNT(*) FROM {table}")
             counts[table] = cursor.fetchone()[0]
@@ -622,7 +621,7 @@ def import_all_vocabulary_tables(vocabulary_path: str = "/app/vocabulary"):
 def save_auto_mapping_audit(
     mappings: list, mapping_method: str, target_domains: list = None
 ):
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         values = []
         for mapping in mappings:
             values.append(
@@ -648,7 +647,7 @@ def save_auto_mapping_audit(
 
 def get_auto_mapping_statistics(vocabulary_id: int = None):
     """Get auto-mapping statistics, optionally filtered by vocabulary"""
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         if vocabulary_id:
             cursor.execute(
                 """
@@ -689,7 +688,7 @@ def get_auto_mapping_statistics(vocabulary_id: int = None):
 
 def get_recent_auto_mappings(vocabulary_id: int = None, limit: int = 100):
     """Get recent auto-mapping results with details"""
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         if vocabulary_id:
             cursor.execute(
                 """
@@ -737,7 +736,7 @@ def get_recent_auto_mappings(vocabulary_id: int = None, limit: int = 100):
 @st.cache_data(ttl=30)
 def get_atc7_statistics():
     """Get ATC7 statistics"""
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         cursor.execute("""
             SELECT 
                 COUNT(*) as total_drugs_with_atc7,
@@ -749,7 +748,7 @@ def get_atc7_statistics():
 
 @st.cache_data(ttl=30)
 def get_source_vocabulary_ids():
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         cursor.execute("""
             SELECT DISTINCT source_vocabulary_id 
             FROM source_concepts 
@@ -761,6 +760,6 @@ def get_source_vocabulary_ids():
 @st.cache_data(ttl=30)
 def get_concept_atc7_count():
     """Get ATC7 concept count"""
-    with closing(conn.cursor()) as cursor:
+    with conn.cursor() as cursor:
         cursor.execute("SELECT COUNT(*) FROM concept_atc7")
         return cursor.fetchone()[0]

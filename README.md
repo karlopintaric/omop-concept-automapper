@@ -72,7 +72,7 @@ Open your browser and go to: <http://localhost:8501>
    - **CONCEPT_RELATIONSHIP.csv**: Relationships between concepts
    - **CONCEPT_ANCESTOR.csv**: Hierarchical relationships
 2. Go to "Import Data" → "OMOP Vocabulary Tables"
-3. Import the vocabulary files using the fast PostgreSQL COPY command
+3. Import the vocabulary files
 
 ### 2. Process ATC7 Codes
 
@@ -90,6 +90,8 @@ Open your browser and go to: <http://localhost:8501>
 1. Go to "Import Data" → "Embedding Management"
 2. Click "Embed Standard Concepts" to create vector embeddings
 3. Only standard concepts will be embedded, with ATC7 metadata for drugs
+4. You can see how many concepts are embedded on [this](http://localhost:6333/dashboard#/collections) page.
+**The UI will not update when the embedding is running but the Qdrant dashboard will**
 
 ### 5. Configure Models
 

@@ -1,8 +1,3 @@
-"""
-CLI database utilities for Auto OMOP Mapper
-Provides database operations optimized for CLI usage without Streamlit dependencies
-"""
-
 import os
 from contextlib import closing
 from src.backend.db.core import get_db_connection, read_query_from_sql_file

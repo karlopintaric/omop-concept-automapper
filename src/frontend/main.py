@@ -1,5 +1,6 @@
 import sys
 import os
+import streamlit as st
 
 # Add the project root to Python path for module imports
 project_root = os.path.dirname(
@@ -8,7 +9,6 @@ project_root = os.path.dirname(
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-import streamlit as st
 
 st.set_page_config(page_title="Auto OMOP Mapper", layout="wide", page_icon="🗺️")
 
