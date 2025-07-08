@@ -102,6 +102,7 @@ class VectorDatabase:
                     AND ec.concept_type = 'standard'
                 WHERE c.standard_concept = 'S'
                 AND ec.concept_id IS NULL
+                AND LOWER(c.concept_class_id) NOT LIKE '%brand%' -- Exclude brand concepts
             """
 
             if domain_filter:
