@@ -6,7 +6,7 @@ from src.backend.db.core import get_db_connection, read_query_from_sql_file
 def seed_database_cli():
     """Seed the database with initial schema (CLI version)"""
     module_dir = os.path.dirname(os.path.dirname(__file__))
-    query_path = os.path.join(module_dir, "db", "data", "seed.sql")
+    query_path = os.path.join(module_dir, "db", "seed.sql")
     seed_query = read_query_from_sql_file(query_path)
 
     with get_db_connection() as conn:
