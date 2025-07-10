@@ -94,7 +94,7 @@ class VectorDatabase:
         try:
             query = """
                 SELECT c.concept_id, c.concept_name, c.domain_id, c.vocabulary_id, 
-                       c.concept_class_id, c.concept_code, ca.atc7_codes
+                    c.concept_class_id, c.concept_code, ca.atc7_codes
                 FROM concept c
                 LEFT JOIN concept_atc7 ca ON c.concept_id = ca.concept_id
                 LEFT JOIN embedded_concepts ec ON c.concept_id = ec.concept_id 
@@ -102,14 +102,17 @@ class VectorDatabase:
                     AND ec.concept_type = 'standard'
                 WHERE c.standard_concept = 'S'
                 AND ec.concept_id IS NULL
-                AND LOWER(c.concept_class_id) NOT LIKE '%brand%' -- Exclude brand concepts
+                AND LOWER(c.concept_class_id) NOT LIKE %s
             """
 
+            params = [self.name, '%brand%']
+
             if domain_filter:
-                query += f" AND c.domain_id = '{domain_filter}'"
+                query += " AND c.domain_id = %s"
+                params.append(domain_filter)
 
             with closing(self.conn.cursor()) as cursor:
-                cursor.execute(query, (self.name,))
+                cursor.execute(query, params)
 
                 while True:
                     batch = cursor.fetchmany(batch_size)
