@@ -103,9 +103,10 @@ class VectorDatabase:
                 WHERE c.standard_concept = 'S'
                 AND ec.concept_id IS NULL
                 AND LOWER(c.concept_class_id) NOT LIKE %s
+                AND LOWER(c.concept_class_id) NOT LIKE %s
             """
-
-            params = [self.name, '%brand%']
+            
+            params = [self.name, '%brand%', '%marketed%'] # remove brand and marketed products to speed up embedding creation
 
             if domain_filter:
                 query += " AND c.domain_id = %s"
