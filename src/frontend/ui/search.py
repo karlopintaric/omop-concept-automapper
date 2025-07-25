@@ -1,6 +1,11 @@
 import streamlit as st
 from src.backend.auto_mapper import init_automapper
 from src.frontend.ui.common import DOMAINS
+from src.backend.utils.logging import (
+    logger,
+    log_and_show_success,
+    log_and_show_warning,
+)
 
 
 def render_search_page():
@@ -30,28 +35,21 @@ def render_search_page():
 
     if query:
         with st.spinner("Searching for similar concepts..."):
-            # Build filters
-            filters = {}
-            if vocabulary_filter:
-                filters["vocabulary_id"] = vocabulary_filter
+            logger.info(f"Searching for concepts similar to: {query}")
+
             if atc7_filter and len(atc7_filter.strip()) > 0:
-                results = auto_mapper.get_similar_concepts_with_atc_filter(
-                    query,
-                    atc7_codes=[atc7_filter.strip()],
-                    k=k_value,
-                    domains=domain_filter,
-                    vocabulary_id=vocabulary_filter,
-                )
-            else:
-                results = auto_mapper.get_similar_concepts(
-                    query,
-                    k=k_value,
-                    domains=domain_filter,
-                    vocabulary_id=vocabulary_filter,
-                )
+                atc7_filter = [atc7_filter.strip()]
+
+            results = auto_mapper.get_similar_concepts(
+                query,
+                k=k_value,
+                domains=domain_filter,
+                vocabulary_id=vocabulary_filter,
+                atc7_codes=atc7_filter if atc7_filter else None,
+            )
 
         if results:
-            st.success(f"Found {len(results)} similar concepts")
+            log_and_show_success(f"Found {len(results)} similar concepts for '{query}'")
 
             # Display results in a more user-friendly format
             for i, result in enumerate(results):
@@ -86,7 +84,7 @@ def render_search_page():
                                 if len(atc7_codes) > 5:
                                     st.write(f"- ... and {len(atc7_codes) - 5} more")
         else:
-            st.warning(
+            log_and_show_warning(
                 "No similar concepts found. Try adjusting your search terms or filters."
             )
     else:

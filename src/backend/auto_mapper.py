@@ -8,6 +8,7 @@ from src.backend.db.methods import (
 )
 
 from src.backend.config_manager import get_config_manager
+from src.backend.utils.logging import logger
 
 
 class AutoMapper:
@@ -31,8 +32,9 @@ class AutoMapper:
         k: int = 5,
         domains: str | list = [],
         vocabulary_id: str = "",
+        atc7_codes: list | None = None,
     ):
-        print(f"🔍 Vector search for: '{source_concept_name}' (k={k})")
+        logger.info(f"🔍 Vector search for: '{source_concept_name}' (k={k})")
 
         filters = {}
         if domains:
@@ -41,16 +43,16 @@ class AutoMapper:
         if vocabulary_id:
             filters["vocabulary_id"] = vocabulary_id
 
-        # Only search for standard concepts
-        filters["type"] = "standard"
+        if atc7_codes:
+            filters["atc7_codes"] = atc7_codes
 
-        print(f"🔍 Filters: {filters}")
+        logger.info(f"🔍 Filters: {filters}")
 
         results = _self.vector_store.search(source_concept_name, k, filters)
 
-        print(f"🔍 Found {len(results)} similar concepts")
+        logger.info(f"🔍 Found {len(results)} similar concepts")
         if results:
-            print(f"🔍 Top result: {results[0].get('concept_name', 'Unknown')}")
+            logger.info(f"🔍 Top result: {results[0].get('concept_name', 'Unknown')}")
 
         return results
 
@@ -259,67 +261,42 @@ class AutoMapper:
         }
 
     def embed_all_concepts(self, domain_filter: str = None, batch_size: int = 100):
-        print("Starting to embed standard concepts...")
+        logger.info("Starting to embed standard concepts...")
 
         # Check status before embedding
         status = self.vector_store.get_embedding_status()
         pending_count = status["standard_concepts"]["pending"]
 
         if pending_count == 0:
-            print("All standard concepts are already embedded!")
+            logger.info("All standard concepts are already embedded!")
             return
 
-        print(f"Found {pending_count} standard concepts to embed...")
+        logger.info(f"Found {pending_count} standard concepts to embed...")
         self.vector_store.embed_standard_concepts(domain_filter, batch_size)
-        print("Standard concepts embedding completed!")
+        logger.info("Standard concepts embedding completed!")
 
     def embed_source_concepts(self, vocabulary_id: int = None, batch_size: int = 100):
         """Embed source concepts in the vector database"""
-        print("Starting to embed source concepts...")
+        logger.info("Starting to embed source concepts...")
 
         # Check status before embedding
         status = self.vector_store.get_embedding_status()
         pending_count = status["source_concepts"]["pending"]
 
         if pending_count == 0:
-            print("All source concepts are already embedded!")
+            logger.info("All source concepts are already embedded!")
             return
 
-        print(f"Found {pending_count} source concepts to embed...")
+        logger.info(f"Found {pending_count} source concepts to embed...")
         self.vector_store.embed_source_concepts(vocabulary_id, batch_size)
-        print("Source concepts embedding completed!")
+        logger.info("Source concepts embedding completed!")
 
     def get_embedding_status(self):
         """Get the current embedding status"""
         return self.vector_store.get_embedding_status()
 
-    @st.cache_data(max_entries=5, show_spinner="Searching with ATC filtering...")
-    def get_similar_concepts_with_atc_filter(
-        _self,
-        source_concept_name: str,
-        atc7_codes: list = None,
-        k: int = 5,
-        domains: str | list = [],
-        vocabulary_id: str = "",
-    ):
-        """Get similar concepts with ATC7 code filtering"""
-        filters = {}
-        if domains:
-            filters["domain_id"] = domains
 
-        if vocabulary_id:
-            filters["vocabulary_id"] = vocabulary_id
-
-        # Only search for standard concepts
-        filters["type"] = "standard"
-
-        results = _self.vector_store.search_with_atc7_filter(
-            source_concept_name, atc7_codes, k, filters
-        )
-
-        return results
-
-
+@st.cache_resource
 def init_automapper():
     config_manager = get_config_manager()
     config = config_manager.get_config()

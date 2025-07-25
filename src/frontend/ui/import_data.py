@@ -16,26 +16,40 @@ from src.backend.db.methods import (
 )
 from src.backend.auto_mapper import init_automapper
 from src.backend.config_manager import get_config_manager
+from src.backend.utils.logging import (
+    logger,
+    log_and_show_error,
+    log_and_show_success,
+    log_and_show_warning,
+)
 
 
 conn = init_connection()
 
 
 def clear_vocab_cache():
+    logger.info("Clearing vocabulary caches")
+
     get_vocabulary_import_status.clear()
     get_vocabulary_table_counts.clear()
 
 
 def clear_embedding_caches():
+    logger.info("Clearing embedding caches")
+
     get_embedding_status.clear()
 
 
 def clear_atc7_caches():
+    logger.info("Clearing ATC7 caches")
+
     get_atc7_statistics.clear()
     get_concept_atc7_count.clear()
 
 
 def clear_source_concepts_cache():
+    logger.info("Clearing source concepts caches")
+
     get_source_vocabulary_ids.clear()
     get_embedding_status.clear()
 
@@ -77,7 +91,7 @@ def render_vocabulary_import_tab():
             st.info("No vocabulary tables have been imported yet.")
 
     except Exception as e:
-        st.error(f"Error getting import status: {str(e)}")
+        log_and_show_error("Error getting import status", e)
 
     # Check file availability
     st.write("### File Status")
@@ -106,7 +120,7 @@ def render_vocabulary_import_tab():
                     st.write("❌ File missing")
 
     except Exception as e:
-        st.error(f"Error checking files: {str(e)}")
+        log_and_show_error("Error checking files", e)
 
     st.divider()
 
@@ -119,6 +133,7 @@ def render_vocabulary_import_tab():
                 with st.spinner(
                     "Importing vocabulary tables... This may take several minutes."
                 ):
+                    logger.info("Starting import of all vocabulary tables")
                     results = import_all_vocabulary_tables()
 
                 # Clear caches after import
@@ -131,26 +146,26 @@ def render_vocabulary_import_tab():
                 total_records = sum(r["records_imported"] for r in results.values())
 
                 if success_count > 0:
-                    st.success(
+                    log_and_show_success(
                         f"✅ Successfully imported {success_count} tables with {total_records:,} total records!"
                     )
 
                 # Show detailed results
                 for table, result in results.items():
                     if result["status"] == "success":
-                        st.success(
+                        log_and_show_success(
                             f"✅ {table}: {result['records_imported']:,} records imported"
                         )
                     elif result["status"] == "failed":
-                        st.error(f"❌ {table}: {result['error']}")
+                        log_and_show_error(f"❌ {table}: {result['error']}")
                     else:
-                        st.warning(f"⚠️ {table}: {result['error']}")
+                        log_and_show_warning(f"⚠️ {table}: {result['error']}")
 
                 # Refresh the page to show updated counts
                 st.rerun()
 
             except Exception as e:
-                st.error(f"❌ Error importing vocabulary: {str(e)}")
+                log_and_show_error("❌ Error importing vocabulary", e)
 
     with col2:
         st.info("""
@@ -177,22 +192,23 @@ def render_atc7_processing_tab():
     if col1.button("🔍 Process ATC7 Codes", type="primary"):
         try:
             with st.spinner("Processing ATC7 codes for drug concepts..."):
+                logger.info("Processing ATC7 codes for drug concepts")
                 count = process_drug_atc7_codes()
 
             # Clear ATC7 caches after processing
             clear_atc7_caches()
 
             if count > 0:
-                st.success(
+                log_and_show_success(
                     f"✅ Successfully processed ATC7 codes for {count:,} drug concepts!"
                 )
             else:
-                st.warning(
+                log_and_show_warning(
                     "⚠️ No ATC7 codes found. Ensure all vocabulary tables are imported."
                 )
 
         except Exception as e:
-            st.error(f"❌ Error processing ATC7 codes: {str(e)}")
+            log_and_show_error("❌ Error processing ATC7 codes", e)
 
     if col2.button("📊 View ATC7 Statistics"):
         try:
@@ -205,7 +221,7 @@ def render_atc7_processing_tab():
                 st.info("No ATC7 data found. Process ATC7 codes first.")
 
         except Exception as e:
-            st.error(f"Error getting ATC7 statistics: {str(e)}")
+            log_and_show_error("❌ Error getting ATC7 statistics", e)
 
 
 def render_source_concepts_tab():
@@ -254,18 +270,21 @@ def render_source_concepts_tab():
                     f.write(source_file.getbuffer())
 
                 with st.spinner("Importing source concepts..."):
+                    logger.info("Importing source concepts")
                     count = import_source_concepts(temp_path, vocabulary_id)
 
                 # Clear source-related caches after import
                 clear_source_concepts_cache()
 
-                st.success(f"✅ Successfully imported {count:,} source concepts!")
+                log_and_show_success(
+                    f"✅ Successfully imported {count:,} source concepts!"
+                )
 
                 # Remove temp file
                 os.remove(temp_path)
 
             except Exception as e:
-                st.error(f"❌ Error importing source concepts: {str(e)}")
+                log_and_show_error("❌ Error importing source concepts", e)
 
         if col2.button("Embed After Import (Source)"):
             st.info(
@@ -281,6 +300,7 @@ def render_embedding_management_tab():
 
     # Show current configuration
     try:
+        auto_mapper = init_automapper()
         config_manager = get_config_manager()
         current_config = config_manager.get_config()
 
@@ -293,13 +313,14 @@ def render_embedding_management_tab():
         """)
 
         # Show collection information
-        auto_mapper = init_automapper()
+
         collection_info = auto_mapper.vector_store.get_collection_info()
         if collection_info:
             st.metric("Points in Collection", f"{collection_info['points_count']:,}")
 
     except Exception as e:
-        st.warning(f"Could not load configuration: {str(e)}")
+        log_and_show_error("Error loading configuration", e)
+        return
 
     col1, col2 = st.columns(2)
 
@@ -331,16 +352,18 @@ def render_embedding_management_tab():
             domain_value = None if domain_filter == "All" else domain_filter
 
             if st.button("🚀 Embed Standard Concepts", type="primary"):
-                auto_mapper = init_automapper()
-
                 with st.spinner(
                     "Embedding standard concepts... This may take a while."
                 ):
+                    logger.info("Embedding standard concepts")
                     progress_bar = st.progress(0)
                     status_text = st.empty()
 
                     try:
-                        auto_mapper.embed_all_concepts(domain_filter=domain_value)
+                        auto_mapper.embed_all_concepts(
+                            domain_filter=domain_value,
+                            batch_size=st.session_state.get("batch_size_setting", 1000),
+                        )
 
                         # Clear embedding caches after successful embedding
                         clear_embedding_caches()
@@ -349,10 +372,10 @@ def render_embedding_management_tab():
                         status_text.success("Standard concepts embedded successfully!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error embedding standard concepts: {str(e)}")
+                        log_and_show_error("Error embedding standard concepts", e)
 
         except Exception as e:
-            st.error(f"Error getting embedding status: {str(e)}")
+            log_and_show_error("Error getting embedding status", e)
 
     with col2:
         st.write("### Source Concepts")
@@ -385,9 +408,8 @@ def render_embedding_management_tab():
             if st.button(
                 "🚀 Embed Source Concepts", type="primary", key="embed_source"
             ):
-                auto_mapper = init_automapper()
-
                 with st.spinner("Embedding source concepts... This may take a while."):
+                    logger.info("Embedding source concepts")
                     progress_bar = st.progress(0)
                     status_text = st.empty()
 
@@ -404,10 +426,10 @@ def render_embedding_management_tab():
                         status_text.success("Source concepts embedded successfully!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error embedding source concepts: {str(e)}")
+                        log_and_show_error("Error embedding source concepts", e)
 
         except Exception as e:
-            st.error(f"Error getting source embedding status: {str(e)}")
+            logger.error("Error getting source embedding status", e)
 
     # Batch embedding settings
     st.divider()

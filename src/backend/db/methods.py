@@ -11,15 +11,7 @@ from src.backend.db.core import (
 import math
 import re
 
-
-def get_connection():
-    """Get database connection - lazy initialization for Streamlit"""
-    if not hasattr(get_connection, "_conn"):
-        get_connection._conn = init_connection()
-    return get_connection._conn
-
-
-conn = get_connection()
+conn = init_connection()
 
 
 def seed_database(conn=None):
@@ -123,7 +115,7 @@ def get_standard_domains():
     return domains
 
 
-@st.cache_data(ttl=30, max_entries=1)
+@st.cache_data(ttl=60, max_entries=1)
 def get_unmapped_source_concepts(vocabulary_id: int, page: int = 1, per_page: int = 50):
     offset = (page - 1) * per_page
 
@@ -163,7 +155,7 @@ def get_unmapped_source_concepts(vocabulary_id: int, page: int = 1, per_page: in
     return response
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def get_unmapped_concepts(vocabulary_id: int):
     with conn.cursor() as c:
         c.execute(
@@ -193,7 +185,7 @@ def get_unmapped_concepts(vocabulary_id: int):
     return response
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def get_mapped_concepts(vocabulary_id: int):
     with conn.cursor() as c:
         c.execute(
@@ -325,7 +317,7 @@ def get_concept_from_id(concept_id: int):
     return response
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def get_embedding_status(table_type: str = "standard_concepts"):
     """Get embedding status for concepts"""
     with conn.cursor() as c:
@@ -439,16 +431,13 @@ def store_atc7_codes_in_db(atc7_results):
 
 
 def process_drug_atc7_codes():
-    print("Finding ATC7 codes for drug concepts...")
     atc7_results = find_atc7_codes_for_drug_concepts()
 
-    print(f"Found ATC7 codes for {len(atc7_results)} drug concepts")
-
+    stored_count = 0
     if atc7_results:
         stored_count = store_atc7_codes_in_db(atc7_results)
-        print(f"Stored ATC7 codes for {stored_count} drug concepts")
 
-    return len(atc7_results)
+    return stored_count
 
 
 def get_atc7_codes_for_concept(concept_id: int):
@@ -530,7 +519,7 @@ def import_vocabulary_with_copy(table_name: str, file_path: str):
         raise e
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def get_vocabulary_import_status():
     with conn.cursor() as cursor:
         cursor.execute("""
@@ -552,7 +541,7 @@ def get_vocabulary_import_status():
         return format_db_response(data, columns)
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def get_vocabulary_table_counts():
     tables = ["concept", "concept_relationship", "concept_ancestor"]
     counts = {}
@@ -733,7 +722,7 @@ def get_recent_auto_mappings(vocabulary_id: int = None, limit: int = 100):
         return format_db_response(data, columns)
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def get_atc7_statistics():
     """Get ATC7 statistics"""
     with conn.cursor() as cursor:
@@ -746,7 +735,7 @@ def get_atc7_statistics():
         return cursor.fetchone()
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def get_source_vocabulary_ids():
     with conn.cursor() as cursor:
         cursor.execute("""
@@ -757,7 +746,7 @@ def get_source_vocabulary_ids():
         return [row[0] for row in cursor.fetchall()]
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def get_concept_atc7_count():
     """Get ATC7 concept count"""
     with conn.cursor() as cursor:

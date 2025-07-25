@@ -25,9 +25,8 @@ def create_connection_string():
 
 
 def create_connection():
-    """Create a new database connection (for CLI usage)"""
+    """Create a new database connection"""
     conn_str = create_connection_string()
-    print(conn_str)
 
     try:
         conn = psycopg.connect(conn_str)
@@ -54,14 +53,7 @@ def get_db_connection():
 @st.cache_resource
 def init_connection():
     """Cached connection for Streamlit app"""
-    conn_str = create_connection_string()
-
-    try:
-        conn = psycopg.connect(conn_str)
-        return conn
-    except Exception as e:
-        st.error(f"Failed to connect to database: {e}")
-        raise
+    return create_connection()
 
 
 def read_query_from_sql_file(SQL_FILE):

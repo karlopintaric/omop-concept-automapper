@@ -4,21 +4,21 @@ from src.backend.db.core import get_db_connection, read_query_from_sql_file
 
 
 def seed_database_cli():
-    """Seed the database with initial schema (CLI version)"""
+    """Seed the database with initial schema"""
     module_dir = os.path.dirname(os.path.dirname(__file__))
     query_path = os.path.join(module_dir, "db", "seed.sql")
     seed_query = read_query_from_sql_file(query_path)
 
     with get_db_connection() as conn:
-        with closing(conn.cursor()) as cursor:
+        with conn.cursor() as cursor:
             cursor.execute(seed_query)
             conn.commit()
 
 
 def get_database_stats():
-    """Get database statistics (CLI version)"""
+    """Get database statistics"""
     with get_db_connection() as conn:
-        with closing(conn.cursor()) as cursor:
+        with conn.cursor() as cursor:
             stats = {}
 
             # Count concepts

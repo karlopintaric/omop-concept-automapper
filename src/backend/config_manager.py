@@ -1,7 +1,7 @@
 import streamlit as st
 from typing import Dict, Any
-from contextlib import closing
 from src.backend.db.core import init_connection
+from src.backend.utils.logging import logger
 
 
 class ConfigManager:
@@ -14,7 +14,7 @@ class ConfigManager:
 
     def _ensure_config_table(self):
         """Create config table if it doesn't exist"""
-        with closing(self.conn.cursor()) as cursor:
+        with self.conn.cursor() as cursor:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS app_config (
                     key TEXT PRIMARY KEY,
@@ -34,7 +34,7 @@ class ConfigManager:
             "reranker.model": "gpt-4.1",
         }
 
-        with closing(self.conn.cursor()) as cursor:
+        with self.conn.cursor() as cursor:
             for key, value in defaults.items():
                 cursor.execute(
                     """
@@ -51,7 +51,7 @@ class ConfigManager:
         """Get current configuration from database"""
         config = {"vector_store": {}, "reranker": {}}
 
-        with closing(_self.conn.cursor()) as cursor:
+        with _self.conn.cursor() as cursor:
             cursor.execute("SELECT key, value FROM app_config")
             db_config = cursor.fetchall()
 
@@ -70,7 +70,7 @@ class ConfigManager:
         return config
 
     def update_config(self, updates: Dict[str, Any]):
-        with closing(self.conn.cursor()) as cursor:
+        with self.conn.cursor() as cursor:
             for key, value in updates.items():
                 cursor.execute(
                     """
@@ -100,7 +100,7 @@ class ConfigManager:
             config = self.get_config()
             return [config["vector_store"]["name"]]
         except Exception as e:
-            print(f"Error getting collections: {e}")
+            logger.error(f"Error getting collections: {e}")
             return ["omop_vocab"]
 
     def validate_dimensions(self, model: str, dims: int) -> bool:

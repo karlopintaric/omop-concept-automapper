@@ -5,6 +5,7 @@ from tqdm import tqdm
 from contextlib import closing
 from src.backend.db.core import init_connection
 from datetime import datetime
+from src.backend.utils.logging import logger
 
 
 class VectorDatabase:
@@ -21,9 +22,6 @@ class VectorDatabase:
         self.vector_store = self._init_db()
         self.conn = init_connection()
 
-        # Ensure database schema is up to date
-        self._ensure_schema_compatibility()
-
     def search(self, query: str, k: int = 5, filters: dict = {}):
         embedded_query = self.emb_model.embed(query)[0]
         filters = self._create_filters(filters)
@@ -39,30 +37,6 @@ class VectorDatabase:
         formatted_results = self._format_results(results)
 
         return formatted_results
-
-    def search_with_atc7_filter(
-        self, query: str, atc7_codes: list = None, k: int = 5, filters: dict = {}
-    ):
-        # Add ATC7 filtering using array matching
-        if atc7_codes:
-            # Convert ATC codes to 7-character format
-            normalized_atc_codes = []
-            for atc7 in atc7_codes:
-                if len(atc7) >= 7:
-                    normalized_atc_codes.append(atc7[:7])
-                else:
-                    normalized_atc_codes.append(atc7)
-
-            # Add ATC7 array filter
-            filters["atc7_codes"] = normalized_atc_codes
-
-        results = self.search(
-            query=query,
-            k=k,
-            filters=filters,
-        )
-
-        return results
 
     def add_docs_from_csv(
         self,
@@ -88,7 +62,7 @@ class VectorDatabase:
             self._toggle_indexing(enable=True)
 
     def embed_standard_concepts(self, domain_filter: str = None, batch_size: int = 100):
-        print("Disabling indexing for better embedding performance...")
+        logger.info("Disabling indexing for better embedding performance...")
         self._toggle_indexing(enable=False)
 
         try:
@@ -105,14 +79,18 @@ class VectorDatabase:
                 AND LOWER(c.concept_class_id) NOT LIKE %s
                 AND LOWER(c.concept_class_id) NOT LIKE %s
             """
-            
-            params = [self.name, '%box%', '%marketed%'] # remove boxes and marketed products to speed up embedding creation
+
+            params = [
+                self.name,
+                "%box%",
+                "%marketed%",
+            ]  # remove boxes and marketed products to speed up embedding creation
 
             if domain_filter:
                 query += " AND c.domain_id = %s"
                 params.append(domain_filter)
 
-            with closing(self.conn.cursor()) as cursor:
+            with self.conn.cursor() as cursor:
                 cursor.execute(query, params)
 
                 while True:
@@ -129,7 +107,7 @@ class VectorDatabase:
 
     def embed_source_concepts(self, vocabulary_id: int = None, batch_size: int = 100):
         """Embed source concepts from database in batches"""
-        print("Disabling indexing for better embedding performance...")
+        logger.info("Disabling indexing for better embedding performance...")
         self._toggle_indexing(enable=False)
 
         try:
@@ -146,7 +124,7 @@ class VectorDatabase:
             if vocabulary_id:
                 query += f" AND sc.source_vocabulary_id = {vocabulary_id}"
 
-            with closing(self.conn.cursor()) as cursor:
+            with self.conn.cursor() as cursor:
                 cursor.execute(query, (self.name,))
 
                 while True:
@@ -158,7 +136,7 @@ class VectorDatabase:
                     self._update_embedded_concepts_table(batch, "source_concepts")
 
         finally:
-            print("Re-enabling indexing...")
+            logger.info("Re-enabling indexing...")
             self._toggle_indexing(enable=True)
 
     def _embed_batch_from_dataframe(
@@ -293,7 +271,7 @@ class VectorDatabase:
                     )
                 )
 
-        with closing(self.conn.cursor()) as cursor:
+        with self.conn.cursor() as cursor:
             cursor.executemany(
                 """
                 INSERT INTO embedded_concepts (concept_id, collection_name, embedding_model, embedded_at, concept_type, source_vocabulary_id) 
@@ -325,8 +303,11 @@ class VectorDatabase:
         return emb_model
 
     def _init_client(self, url: str):
-        client = QdrantClient(url=url, timeout=500)
-        return client
+        try:
+            return QdrantClient(url=url, timeout=500)
+        except Exception as e:
+            logger.error("Error initializing Qdrant client", exc_info=True)
+            raise
 
     def _init_db(self):
         emb_size = len(self.emb_model.embed("test")[0])
@@ -340,7 +321,7 @@ class VectorDatabase:
                 hnsw_config=models.HnswConfigDiff(m=0),
             )
 
-            print("Vector store created")
+            logger.info("Vector store created")
 
     def _create_filters(self, filter_dict: dict):
         if not filter_dict:
@@ -348,34 +329,14 @@ class VectorDatabase:
 
         filters = []
         for k, v in filter_dict.items():
-            if k == "atc7_codes":
-                # Special handling for ATC7 codes array filtering
-                # Check if any of the provided ATC codes are in the document's ATC codes array
-                if isinstance(v, list):
-                    # Use MatchAny to check if any of the provided ATC codes
-                    # are present in the document's ATC codes array
-                    filters.append(
-                        models.FieldCondition(
-                            key=f"metadata.{k}", match=models.MatchAny(any=v)
-                        )
-                    )
-                else:
-                    # Single ATC code
-                    filters.append(
-                        models.FieldCondition(
-                            key=f"metadata.{k}", match=models.MatchValue(value=v)
-                        )
-                    )
+            if isinstance(v, list):
+                match_condition = models.MatchAny(any=v)
             else:
-                # Regular filtering
-                if isinstance(v, list):
-                    match_condition = models.MatchAny(any=v)
-                else:
-                    match_condition = models.MatchValue(value=v)
+                match_condition = models.MatchValue(value=v)
 
-                filters.append(
-                    models.FieldCondition(key=f"metadata.{k}", match=match_condition)
-                )
+            filters.append(
+                models.FieldCondition(key=f"metadata.{k}", match=match_condition)
+            )
 
         return models.Filter(must=filters)
 
@@ -429,6 +390,9 @@ class VectorDatabase:
                 "status": info.status,
             }
         except Exception:
+            logger.error(
+                f"Error getting collection info for {collection_name}", exc_info=True
+            )
             return None
 
     def delete_collection(self, collection_name: str):
@@ -470,7 +434,7 @@ class VectorDatabase:
 
     def get_embedding_status(self):
         """Get the status of embeddings for the current collection"""
-        with closing(self.conn.cursor()) as cursor:
+        with self.conn.cursor() as cursor:
             # Count total standard concepts
             cursor.execute("SELECT COUNT(*) FROM concept WHERE standard_concept = 'S'")
             total_standard = cursor.fetchone()[0]
@@ -518,7 +482,7 @@ class VectorDatabase:
 
     def check_concept_already_embedded(self, concept_id: int):
         """Check if a specific concept is already embedded in the current collection"""
-        with closing(self.conn.cursor()) as cursor:
+        with self.conn.cursor() as cursor:
             cursor.execute(
                 """
                 SELECT embedded_at FROM embedded_concepts 
@@ -539,10 +503,6 @@ class VectorDatabase:
             collection_name=self.name,
             hnsw_config=models.HnswConfigDiff(m=m),
         )
-
-    def _ensure_schema_compatibility(self):
-        """Ensure database schema is compatible with current version"""
-        pass  # Schema compatibility is now handled by seed.sql
 
     @staticmethod
     def _source_id_to_vector_id(source_id: int) -> int:

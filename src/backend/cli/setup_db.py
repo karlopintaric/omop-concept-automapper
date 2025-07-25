@@ -16,31 +16,34 @@ sys.path.insert(0, project_root)
 # Import after path setup
 from src.backend.db.cli_utils import seed_database_cli, get_database_stats  # noqa: E402
 from src.backend.db.core import get_db_connection, create_connection_string  # noqa: E402
+from src.backend.utils.logging import logger  # noqa: E402
 
 
 def wait_for_database(max_attempts=30, delay=2):
     """Wait for database to be ready"""
-    print("Waiting for database to be ready...")
+    logger.info("Waiting for database to be ready...")
 
     for attempt in range(max_attempts):
         try:
             with get_db_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("SELECT 1")
-                    print("✅ Database connection established")
+                    logger.info("✅ Database connection established")
                     return True
         except Exception as e:
-            print(f"Attempt {attempt + 1}/{max_attempts}: Database not ready yet ({e})")
+            logger.warning(
+                f"Attempt {attempt + 1}/{max_attempts}: Database not ready yet ({e})"
+            )
             if attempt < max_attempts - 1:
                 time.sleep(delay)
 
-    print("❌ Database failed to become ready after maximum attempts")
+    logger.error("❌ Database failed to become ready after maximum attempts")
     return False
 
 
 def setup_database():
     """Initialize and seed the database"""
-    print("🗄️ Setting up Auto OMOP Mapper database...")
+    logger.info("🗄️ Setting up Auto OMOP Mapper database...")
 
     # Display connection info (without password)
     try:
@@ -49,9 +52,9 @@ def setup_database():
         parts = conn_str.split("@")
         if len(parts) > 1:
             host_db = parts[1]
-            print(f"📡 Connecting to: {host_db}")
+            logger.info(f"📡 Connecting to: {host_db}")
     except Exception as e:
-        print(f"❌ Error reading connection info: {e}")
+        logger.error("❌ Error reading connection info", exc_info=True)
         sys.exit(1)
 
     # Wait for database to be ready
@@ -61,21 +64,21 @@ def setup_database():
     # Set up database schema
     try:
         seed_database_cli()
-        print("✅ Database schema created successfully")
+        logger.info("✅ Database schema created successfully")
 
         # Show database stats
         stats = get_database_stats()
-        print(f"📊 Database initialized with {stats['total_concepts']} concepts")
+        logger.info(f"📊 Database initialized with {stats['total_concepts']} concepts")
 
-        print("\n🎉 Database setup completed successfully!")
-        print("\nNext steps:")
-        print("1. Open http://localhost:8501 in your browser")
-        print("2. Go to the 'Import Data' page to upload your vocabularies")
-        print("3. Embed the concepts for similarity search")
-        print("4. Start mapping your concepts!")
+        logger.info("🎉 Database setup completed successfully!")
+        logger.info("Next steps:")
+        logger.info("1. Open http://localhost:8501 in your browser")
+        logger.info("2. Go to the 'Import Data' page to upload your vocabularies")
+        logger.info("3. Embed the concepts for similarity search")
+        logger.info("4. Start mapping your concepts!")
 
     except Exception as e:
-        print(f"❌ Error setting up database: {e}")
+        logger.error("❌ Error setting up database", exc_info=True)
         sys.exit(1)
 
 

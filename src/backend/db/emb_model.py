@@ -1,5 +1,6 @@
 from openai import OpenAI
 import time
+from src.backend.utils.logging import logger
 
 
 class EmbeddingModel:
@@ -13,7 +14,12 @@ class EmbeddingModel:
     def _init_client(
         self,
     ):
-        client = OpenAI()
+        try:
+            client = OpenAI()
+        except Exception as e:
+            logger.error("Error initializing OpenAI client", exc_info=True)
+            raise
+
         return client
 
     def _create_embeddings(self, text):
@@ -26,15 +32,17 @@ class EmbeddingModel:
         return embeddings
 
     def embed(self, text):
-        for i in range(self.num_retries):
+        for attempt in range(1, self.num_retries + 1):
             try:
                 return self._create_embeddings(text)
-            except Exception:
-                print(
-                    "Error creating embeddings. Retrying...",
+            except Exception as e:
+                logger.error(
+                    f"Error creating embeddings (attempt {attempt}/{self.num_retries})",
+                    exc_info=True,
                 )
-                time.sleep(3)
-
-        raise Exception(
-            f"Failed to create embeddings after {self.num_retries} retries."
-        )
+                if attempt < self.num_retries:
+                    time.sleep(3)
+                else:
+                    raise RuntimeError(
+                        f"Failed to create embeddings after {self.num_retries} retries."
+                    ) from e
