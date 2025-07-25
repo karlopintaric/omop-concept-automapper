@@ -56,3 +56,7 @@ README_updated.md
 # Notebooks
 notebooks/
 evaluation/
+
+# Vocabulary csvs
+vocabulary/
+*.csv
