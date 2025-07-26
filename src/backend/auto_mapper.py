@@ -1,29 +1,28 @@
 import streamlit as st
 from src.backend.llms.reranker import Reranker
-from src.backend.db.vector_store import VectorDatabase
-from src.backend.db.methods import (
-    get_unmapped_concepts,
+from src.backend.llms.vector_store import VectorDatabase
+from src.backend.llms.emb_model import OpenAIEmbeddingModel
+from src.backend.llms.client import OpenAIClient
+from src.backend.llms.chat_model import ChatModelWithStructuredOutput
+
+from src.backend.db.methods.utils import (
+    extract_atc7_codes_from_source,
+)
+from src.backend.db.methods.mapping import (
+    get_unmapped_source_concepts,
     map_concepts,
-    save_auto_mapping_audit,
+    save_mapping_audit,
 )
 
+from src.backend.db.methods.embeddings import get_embedding_status
 from src.backend.config_manager import get_config_manager
 from src.backend.utils.logging import logger
 
 
 class AutoMapper:
-    def __init__(self, vector_store_config, reranker_config):
-        self.vector_store = VectorDatabase(
-            vector_store_config["name"],
-            embeddings=vector_store_config["embeddings"],
-            emb_dims=vector_store_config["dims"],
-            url=vector_store_config["url"],
-        )
-
-        self.rerankers = {
-            "drug": Reranker(reranker_config["model"], drug_specific=True),
-            "concept": Reranker(reranker_config["model"], drug_specific=False),
-        }
+    def __init__(self, vector_store: VectorDatabase, rerankers: dict[str, Reranker]):
+        self.vector_store = vector_store
+        self.rerankers = rerankers
 
     @st.cache_data(max_entries=5)
     def get_similar_concepts(
@@ -46,6 +45,8 @@ class AutoMapper:
         if atc7_codes:
             filters["atc7_codes"] = atc7_codes
 
+        filters["type"] = "standard"
+
         logger.info(f"🔍 Filters: {filters}")
 
         results = _self.vector_store.search(source_concept_name, k, filters)
@@ -61,39 +62,20 @@ class AutoMapper:
         _self,
         source_concept_name: str,
         domains: list | str = [],
+        drug_specific: bool = False,
+        atc7_codes: list | None = None,
     ):
+        k = 25 if drug_specific else 10
+        reranker_type = "drug" if drug_specific else "concept"
+
         matched_concepts = _self.get_similar_concepts(
-            source_concept_name, domains=domains, k=10
+            source_concept_name, domains=domains, k=k, atc7_codes=atc7_codes
         )
 
         if len(matched_concepts) == 0:
             return
 
-        return _self.rerankers["concept"].select_similar(
-            source_concept_name, matched_concepts
-        )
-
-    @st.cache_data(
-        max_entries=5, show_spinner="Finding best match with ATC filtering..."
-    )
-    def auto_map_with_atc_filter(
-        _self,
-        source_concept_name: str,
-        atc7_codes: list = None,
-        domains: list | str = [],
-    ):
-        """Auto-map with ATC7 code filtering"""
-        matched_concepts = _self.get_similar_concepts_with_atc_filter(
-            source_concept_name,
-            atc7_codes=atc7_codes,
-            k=25,
-            domains=domains,
-        )
-
-        if len(matched_concepts) == 0:
-            return
-
-        return _self.rerankers["drug"].select_similar(
+        return _self.rerankers[reranker_type].select_similar(
             source_concept_name, matched_concepts
         )
 
@@ -105,7 +87,9 @@ class AutoMapper:
         confidence_threshold: int = 8,
     ):
         """Auto-map all unmapped concepts and save results to database"""
-        unmapped_concepts = get_unmapped_concepts(vocabulary_id)
+        unmapped_concepts = get_unmapped_source_concepts(
+            vocabulary_id,
+        )
 
         # Ensure target_domains is a list for processing
         if isinstance(target_domains, str):
@@ -115,11 +99,11 @@ class AutoMapper:
         total_concepts = len(unmapped_concepts)
 
         # Debug logging
-        print(
+        logger.info(
             f"Found {total_concepts} unmapped concepts for vocabulary {vocabulary_id}"
         )
         if total_concepts == 0:
-            print("No unmapped concepts found - auto mapping completed")
+            logger.info("No unmapped concepts found - auto mapping completed")
             return {
                 "mapped_count": 0,
                 "total_concepts": 0,
@@ -130,10 +114,8 @@ class AutoMapper:
         # Determine mapping method for audit trail
         mapping_method = "auto_drug" if drug_specific else "auto_standard"
 
-        # Check if we're in Streamlit context for progress bar
+        # Streamlit progress bar
         try:
-            import streamlit as st
-
             progress_bar = st.progress(0)
             status_text = st.empty()
             in_streamlit = True
@@ -142,10 +124,10 @@ class AutoMapper:
             status_text = None
             in_streamlit = False
 
-        print(f"Starting auto-mapping for {total_concepts} concepts...")
-        print(f"Mapping method: {mapping_method}")
-        print(f"Target domains: {target_domains}")
-        print(f"Confidence threshold: {confidence_threshold}")
+        logger.info(f"Starting auto-mapping for {total_concepts} concepts...")
+        logger.info(f"Mapping method: {mapping_method}")
+        logger.info(f"Target domains: {target_domains}")
+        logger.info(f"Confidence threshold: {confidence_threshold}")
 
         for i, source_concept in enumerate(unmapped_concepts):
             source_concept_name = source_concept["source_concept_name"]
@@ -160,44 +142,33 @@ class AutoMapper:
                 )
 
             try:
-                print(
+                logger.info(
                     f"Processing concept {i + 1}/{total_concepts}: '{source_concept_name}'"
                 )
 
-                # For drug-specific mapping, try ATC7 filtering first
+                source_value = source_concept.get("source_value", "")
+                atc7_codes = None
                 if drug_specific:
-                    from src.backend.db.methods import extract_atc7_codes_from_source
-
-                    # Extract ATC7 codes from source value and name
-                    source_value = source_concept.get("source_value", "")
                     atc7_codes = extract_atc7_codes_from_source(source_value)
 
                     if atc7_codes:
-                        print(
+                        logger.info(
                             f"Found ATC7 codes: {atc7_codes} for '{source_concept_name}'"
                         )
-                        mapped_result = self.auto_map_with_atc_filter(
-                            source_concept_name,
-                            atc7_codes=atc7_codes,
-                            domains=target_domains,
-                        )
-                    else:
-                        print(
-                            f"No ATC7 codes found for '{source_concept_name}', using standard drug mapping"
-                        )
-                        mapped_result = self.auto_map(
-                            source_concept_name,
-                            drug_specific=drug_specific,
-                            domains=target_domains,
-                        )
-                else:
-                    mapped_result = self.auto_map(
-                        source_concept_name,
-                        drug_specific=drug_specific,
-                        domains=target_domains,
-                    )
 
-                print(f"Auto map result: {mapped_result}")
+                    else:
+                        logger.info(
+                            f"No ATC7 codes found for '{source_concept_name}', falling back to standard mapping"
+                        )
+
+                mapped_result = self.auto_map(
+                    source_concept_name,
+                    domains=target_domains,
+                    drug_specific=drug_specific,
+                    atc7_codes=atc7_codes,
+                )
+
+                logger.info(f"Auto map result: {mapped_result}")
 
                 if (
                     mapped_result
@@ -217,30 +188,34 @@ class AutoMapper:
                     ]
 
                     # Save mapping to database
-                    map_concepts(mapping_data, is_manual=False)
+                    map_concepts(mapping_data)
 
                     # Save audit trail
-                    save_auto_mapping_audit(
-                        mapping_data, mapping_method, target_domains
+                    save_mapping_audit(
+                        mapping_data,
+                        mapping_method,
+                        target_domains=target_domains,
                     )
 
                     mapped_count += 1
 
-                    print(
+                    logger.info(
                         f"✓ Mapped '{source_concept_name}' → '{selected_concept['concept_name']}' (confidence: {confidence_score})"
                     )
 
                 else:
                     if mapped_result:
                         confidence = mapped_result.get("confidence_score", 0)
-                        print(
+                        logger.info(
                             f"✗ Skipped '{source_concept_name}' (confidence: {confidence} < {confidence_threshold})"
                         )
                     else:
-                        print(f"✗ No mapping found for '{source_concept_name}'")
+                        logger.info(f"✗ No mapping found for '{source_concept_name}'")
 
             except Exception as e:
-                print(f"✗ Error mapping concept '{source_concept_name}': {str(e)}")
+                logger.error(
+                    f"✗ Error mapping concept '{source_concept_name}", exc_info=True
+                )
                 continue
 
         # Clear progress indicators
@@ -248,7 +223,7 @@ class AutoMapper:
             progress_bar.empty()
             status_text.empty()
 
-        print(
+        logger.info(
             f"Auto-mapping completed: {mapped_count}/{total_concepts} concepts mapped successfully"
         )
 
@@ -264,8 +239,8 @@ class AutoMapper:
         logger.info("Starting to embed standard concepts...")
 
         # Check status before embedding
-        status = self.vector_store.get_embedding_status()
-        pending_count = status["standard_concepts"]["pending"]
+        status = self.get_embedding_status_for_collection("standard_concepts")
+        pending_count = status["pending"]
 
         if pending_count == 0:
             logger.info("All standard concepts are already embedded!")
@@ -280,8 +255,8 @@ class AutoMapper:
         logger.info("Starting to embed source concepts...")
 
         # Check status before embedding
-        status = self.vector_store.get_embedding_status()
-        pending_count = status["source_concepts"]["pending"]
+        status = self.get_embedding_status_for_collection("source_concepts")
+        pending_count = status["pending"]
 
         if pending_count == 0:
             logger.info("All source concepts are already embedded!")
@@ -291,9 +266,9 @@ class AutoMapper:
         self.vector_store.embed_source_concepts(vocabulary_id, batch_size)
         logger.info("Source concepts embedding completed!")
 
-    def get_embedding_status(self):
+    def get_embedding_status_for_collection(self, table_type: str):
         """Get the current embedding status"""
-        return self.vector_store.get_embedding_status()
+        return get_embedding_status(self.vector_store.name, table_type=table_type)
 
 
 @st.cache_resource
@@ -301,4 +276,40 @@ def init_automapper():
     config_manager = get_config_manager()
     config = config_manager.get_config()
 
-    return AutoMapper(config["vector_store"], config["reranker"])
+    vector_store_config = config["vector_store"]
+    reranker_config = config["reranker"]
+
+    client = OpenAIClient()
+
+    emb_model = OpenAIEmbeddingModel(
+        vector_store_config["embeddings"],
+        client,
+        dims=vector_store_config["dims"],
+    )
+
+    vector_store = VectorDatabase(
+        vector_store_config["name"],
+        embedding_model=emb_model,
+        url=vector_store_config["url"],
+    )
+
+    chat_model = ChatModelWithStructuredOutput(
+        reranker_config["model"],
+        client,
+    )
+
+    rerankers = {
+        "concept": Reranker(
+            chat_model,
+            drug_specific=False,
+        ),
+        "drug": Reranker(
+            chat_model,
+            drug_specific=True,
+        ),
+    }
+
+    return AutoMapper(
+        vector_store,
+        rerankers=rerankers,
+    )

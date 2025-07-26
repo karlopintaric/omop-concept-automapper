@@ -1,23 +1,26 @@
 import streamlit as st
 import pandas as pd
 import re
-from src.backend.db.methods import (
-    get_unmapped_source_concepts,
+from src.backend.db.methods.utils import (
     get_total_pages,
     get_concept_from_id,
-    map_concepts,
-    get_unmapped_concepts,
-    get_mapped_concepts,
     get_auto_mapping_statistics,
     get_recent_auto_mappings,
     extract_atc7_codes_from_source,
 )
-from src.backend.auto_mapper import init_automapper
-from src.backend.db.models import StandardConcept
+from src.backend.db.methods.mapping import (
+    get_unmapped_source_concepts,
+    map_concepts,
+    get_mapped_concepts,
+    save_mapping_audit,
+)
+from src.backend.auto_mapper import init_automapper, AutoMapper
 from src.frontend.ui.common import (
     display_vocabulary_selector,
     DOMAINS,
 )
+from src.backend.utils.logging import log_and_show_error, logger
+from src.frontend.ui.common import clear_mapping_cache
 
 # Constants
 ATC7_PATTERN = r"^[A-Z]\d{2}[A-Z]{2}\d{2}$"
@@ -44,18 +47,6 @@ SEARCH_RESULTS_COLUMNS = {
         "Similarity", format="%.3f", help="Higher values indicate better matches"
     )
 }
-
-
-def clear_mapping_cache():
-    """Clear the cache for mapping-related functions"""
-    try:
-        # Clear specific cache functions
-        get_unmapped_source_concepts.clear()
-        get_unmapped_concepts.clear()
-        get_mapped_concepts.clear()
-        print("✅ Mapping cache cleared")
-    except Exception as e:
-        print(f"Warning: Could not clear cache: {e}")
 
 
 def initialize_page_controls(vocabulary_id: int, is_drug_vocabulary: bool = False):
@@ -116,6 +107,7 @@ def initialize_page_controls(vocabulary_id: int, is_drug_vocabulary: bool = Fals
             if target_domains:
                 auto_mapper = init_automapper()
                 with st.spinner("Auto-mapping all concepts... This may take a while."):
+                    logger.info("Started auto-mapping all concepts...")
                     try:
                         result = auto_mapper.automap_all(
                             vocabulary_id,
@@ -127,7 +119,7 @@ def initialize_page_controls(vocabulary_id: int, is_drug_vocabulary: bool = Fals
                         clear_mapping_cache()
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error during auto-mapping: {str(e)}")
+                        log_and_show_error("Error during auto-mapping", e)
             else:
                 st.warning("Please select at least one target domain for auto-mapping.")
 
@@ -172,7 +164,9 @@ def display_data_table(vocabulary_id: int, current_page: int, batch_size: int):
     return event.selection.rows, data
 
 
-def display_concept_details(concept_data: dict, auto_mapper, is_drug_vocabulary: bool):
+def display_concept_details(
+    concept_data: dict, auto_mapper: AutoMapper, is_drug_vocabulary: bool
+):
     st.subheader(f"📝 Mapping: {concept_data['source_concept_name']}")
 
     # Concept information row
@@ -193,6 +187,7 @@ def display_concept_details(concept_data: dict, auto_mapper, is_drug_vocabulary:
             is_drug_vocabulary, concept_data.get("source_value", "")
         )
 
+    results = []
     # Search for similar concepts
     if cols[4].button("🔍 Search Similar Concepts", type="primary"):
         with st.spinner("Searching for similar concepts..."):
@@ -200,33 +195,23 @@ def display_concept_details(concept_data: dict, auto_mapper, is_drug_vocabulary:
                 auto_mapper, concept_name_input, search_params
             )
             st.session_state.search_method = search_method
-            st.session_state.search_results = results
-
-    # Display search results if available
-    results = st.session_state.get("search_results", [])
 
     if not results:
-        if concept_name_input != concept_data["source_concept_name"]:
-            st.info(
-                "Click 'Search Similar Concepts' to find matches for the updated concept name."
+        # Auto-search on first load with default filters
+        with st.spinner("Searching for similar concepts..."):
+            auto_search_params = {
+                "domains": st.session_state.get("domains", []),
+                "vocabulary_filter": "",
+                "limit": DEFAULT_SEARCH_LIMIT,
+                "use_atc7_filter": is_drug_vocabulary,
+                "atc7_codes": extract_atc7_codes_from_source(
+                    concept_data.get("source_value")
+                ),
+            }
+            results, search_method = _perform_concept_search(
+                auto_mapper, concept_name_input, auto_search_params
             )
-        else:
-            # Auto-search on first load with default filters
-            with st.spinner("Searching for similar concepts..."):
-                auto_search_params = {
-                    "domains": st.session_state.get("domains", []),
-                    "vocabulary_filter": "",
-                    "limit": DEFAULT_SEARCH_LIMIT,
-                    "use_atc7_filter": is_drug_vocabulary,
-                    "atc7_codes": extract_atc7_codes_from_source(
-                        concept_data.get("source_value")
-                    ),
-                }
-                results, search_method = _perform_concept_search(
-                    auto_mapper, concept_name_input, auto_search_params
-                )
-                st.session_state.search_results = results
-                st.session_state.search_method = f"Auto {search_method}"
+            st.session_state.search_method = f"Auto {search_method}"
 
     if not results:
         st.warning(
@@ -282,7 +267,7 @@ def display_concept_details(concept_data: dict, auto_mapper, is_drug_vocabulary:
 def display_mapping_statistics(vocabulary_id: int):
     """Display mapping statistics for the selected vocabulary"""
     try:
-        unmapped_count = len(get_unmapped_concepts(vocabulary_id))
+        unmapped_count = len(get_unmapped_source_concepts(vocabulary_id))
         mapped_count = len(get_mapped_concepts(vocabulary_id))
         total_count = unmapped_count + mapped_count
 
@@ -408,7 +393,6 @@ def _validate_atc7_code(code: str) -> bool:
 
 def _get_atc7_codes(source_value: str, manual_atc7: str = None) -> list:
     """Extract or validate ATC7 codes from source value or manual input"""
-    from src.backend.db.methods import extract_atc7_codes_from_source
 
     # Try automatic extraction first
     auto_codes = extract_atc7_codes_from_source(source_value)
@@ -429,29 +413,24 @@ def _get_atc7_codes(source_value: str, manual_atc7: str = None) -> list:
 
 
 def _perform_concept_search(
-    auto_mapper, concept_name: str, search_params: dict
+    auto_mapper: AutoMapper, concept_name: str, search_params: dict
 ) -> tuple:
     """Perform concept search with ATC7 filtering if applicable"""
     use_atc7 = search_params.get("use_atc7_filter", False)
     atc7_codes = search_params.get("atc7_codes", [])
 
     if use_atc7 and atc7_codes:
-        results = auto_mapper.get_similar_concepts_with_atc_filter(
-            concept_name,
-            atc7_codes=atc7_codes,
-            k=search_params.get("limit", DEFAULT_SEARCH_LIMIT),
-            domains=search_params.get("domains", []),
-            vocabulary_id=search_params.get("vocabulary_filter", ""),
-        )
         search_method = f"ATC7 filtered ({atc7_codes[0]})"
     else:
-        results = auto_mapper.get_similar_concepts(
-            concept_name,
-            k=search_params.get("limit", DEFAULT_SEARCH_LIMIT),
-            domains=search_params.get("domains", []),
-            vocabulary_id=search_params.get("vocabulary_filter", ""),
-        )
         search_method = "Standard similarity"
+
+    results = auto_mapper.get_similar_concepts(
+        concept_name,
+        k=search_params.get("limit", DEFAULT_SEARCH_LIMIT),
+        domains=search_params.get("domains", []),
+        vocabulary_id=search_params.get("vocabulary_filter", ""),
+        atc7_codes=atc7_codes if use_atc7 else None,
+    )
 
     return results, search_method
 
@@ -475,25 +454,6 @@ def _display_auto_mapping_result(result: dict):
             )
     else:
         st.success("Auto-mapping completed!")
-
-
-def _create_standard_concepts(selected_concepts: list) -> list:
-    """Convert selected concept dictionaries to StandardConcept objects"""
-    standard_concepts = []
-    for concept in selected_concepts:
-        if isinstance(concept, dict):
-            standard_concepts.append(
-                StandardConcept(
-                    concept_id=concept["concept_id"],
-                    concept_name=concept["concept_name"],
-                    domain_id=concept["domain_id"],
-                    vocabulary_id=concept.get("vocabulary_id", ""),
-                    concept_class_id=concept.get("concept_class_id", ""),
-                    standard_concept=concept.get("standard_concept", "S"),
-                    concept_code=concept.get("concept_code", ""),
-                )
-            )
-    return standard_concepts
 
 
 def _render_search_filters(is_drug_vocabulary: bool, source_value: str) -> dict:
@@ -584,15 +544,16 @@ def _display_selected_concepts_and_map(
     selected_concepts: list, source_concept_data: dict, cols
 ):
     """Display selected concepts and handle mapping confirmation"""
-    standard_concepts = _create_standard_concepts(selected_concepts)
 
     with cols[1]:
         st.markdown("**Selected concepts for mapping:**")
-        for i, concept in enumerate(standard_concepts, 1):
+        for i, concept in enumerate(selected_concepts, 1):
             with st.container(border=True):
-                st.markdown(f"**{i}. {concept.concept_name}**")
-                st.caption(f"ID: {concept.concept_id} | Domain: {concept.domain_id}")
-                st.caption(f"Vocabulary: {concept.vocabulary_id}")
+                st.markdown(f"**{i}. {concept['concept_name']}**")
+                st.caption(
+                    f"ID: {concept['concept_id']} | Domain: {concept['domain_id']}"
+                )
+                st.caption(f"Vocabulary: {concept['vocabulary_id']}")
 
         st.divider()
 
@@ -601,22 +562,22 @@ def _display_selected_concepts_and_map(
                 mappings = [
                     {
                         "source_id": source_concept_data["source_id"],
-                        "concept_id": concept.concept_id,
+                        "concept_id": concept["concept_id"],
                     }
-                    for concept in standard_concepts
+                    for concept in selected_concepts
                 ]
                 map_concepts(mappings)
                 st.success(
-                    f"Successfully mapped to {len(standard_concepts)} concept(s)!"
+                    f"Successfully mapped to {len(selected_concepts)} concept(s)!"
                 )
 
-                # Clear search results to refresh the page
-                if "search_results" in st.session_state:
-                    del st.session_state.search_results
+                # Save mapping audit
+                save_mapping_audit(mappings, mapping_method="manual")
+
                 clear_mapping_cache()
                 st.rerun()
             except Exception as e:
-                st.error(f"Error mapping concepts: {str(e)}")
+                st.error("Error mapping concepts", exc_info=True)
 
 
 render_mapping_page()

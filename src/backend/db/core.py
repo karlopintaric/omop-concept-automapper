@@ -1,4 +1,5 @@
 import os
+from typing import Iterable
 import psycopg
 from dotenv import load_dotenv
 from contextlib import contextmanager
@@ -24,7 +25,7 @@ def create_connection_string():
     return f"postgresql://{user}:{password}@{host}:{port}/{database}"
 
 
-def create_connection():
+def create_connection() -> psycopg.Connection:
     """Create a new database connection"""
     conn_str = create_connection_string()
 
@@ -63,7 +64,7 @@ def read_query_from_sql_file(SQL_FILE):
     return sql_query
 
 
-def format_db_response(data, columns):
+def format_db_response(data: Iterable, columns: list) -> list[dict]:
     response = []
 
     for row in data:

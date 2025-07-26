@@ -1,7 +1,19 @@
 import streamlit as st
-from src.backend.db.methods import get_source_vocabulary_ids, get_standard_domains
+from src.backend.db.methods.mapping import (
+    get_mapped_concepts,
+    get_unmapped_source_concepts,
+)
+from src.backend.db.methods.utils import get_source_vocabulary_ids, get_total_pages
+from src.backend.utils.logging import logger
 
-DOMAINS = ["Device", "Drug", "Measurement", "Observation", "Procedure", "Condition"]
+DOMAINS = [
+    "Condition",
+    "Device",
+    "Drug",
+    "Measurement",
+    "Observation",
+    "Procedure",
+]
 
 
 def display_vocabulary_selector():
@@ -20,25 +32,10 @@ def display_vocabulary_selector():
     return selected_vocabulary, is_drug_vocabulary
 
 
-def display_domain_selector():
-    """Display standard domain selector"""
-    domains = get_standard_domains()
-    if not domains:
-        st.warning("No standard domains found. Please import OMOP vocabulary first.")
-        return []
-
-    selected_domains = st.multiselect(
-        "Target Domains",
-        options=domains,
-        default=domains[:3] if len(domains) >= 3 else domains,
-    )
-
-    return selected_domains
-
-
-def display_file_uploader(label: str, file_type: str = "csv"):
-    """Generic file uploader component"""
-    uploaded_file = st.file_uploader(
-        label, type=[file_type], help=f"Upload a {file_type.upper()} file"
-    )
-    return uploaded_file
+def clear_mapping_cache():
+    """Clear the cache for mapping-related functions"""
+    # Clear specific cache functions
+    get_unmapped_source_concepts.clear()
+    get_mapped_concepts.clear()
+    get_total_pages.clear()
+    logger.info("✅ Mapping cache cleared")

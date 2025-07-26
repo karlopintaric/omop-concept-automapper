@@ -1,6 +1,12 @@
 import streamlit as st
 from typing import Dict, Any
 from src.backend.db.core import init_connection
+from src.backend.db.methods.config import (
+    create_config_table,
+    set_default_config,
+    get_config,
+    update_config,
+)
 from src.backend.utils.logging import logger
 
 
@@ -8,21 +14,13 @@ class ConfigManager:
     """Manage application configuration with database persistence"""
 
     def __init__(self):
-        self.conn = init_connection()
         self._ensure_config_table()
         self._set_defaults()
 
     def _ensure_config_table(self):
         """Create config table if it doesn't exist"""
-        with self.conn.cursor() as cursor:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS app_config (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            self.conn.commit()
+        create_config_table()
+        logger.info("✅ Config table ensured in database")
 
     def _set_defaults(self):
         """Set default configuration values if they don't exist"""
@@ -34,55 +32,38 @@ class ConfigManager:
             "reranker.model": "gpt-4.1",
         }
 
-        with self.conn.cursor() as cursor:
-            for key, value in defaults.items():
-                cursor.execute(
-                    """
-                    INSERT INTO app_config (key, value, updated_at) 
-                    VALUES (%s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (key) DO NOTHING
-                """,
-                    (key, value),
-                )
-            self.conn.commit()
+        set_default_config(defaults)
 
-    @st.cache_data(ttl=30)
+    @st.cache_data(ttl=60)
     def get_config(_self) -> Dict[str, Any]:
         """Get current configuration from database"""
         config = {"vector_store": {}, "reranker": {}}
 
-        with _self.conn.cursor() as cursor:
-            cursor.execute("SELECT key, value FROM app_config")
-            db_config = cursor.fetchall()
+        db_config = get_config()
+        if not db_config:
+            logger.warning("No configuration found in the database. Using defaults.")
+            return config
 
-            for key, value in db_config:
-                if key == "vector_store.embeddings":
-                    config["vector_store"]["embeddings"] = value
-                elif key == "vector_store.dims":
-                    config["vector_store"]["dims"] = int(value)
-                elif key == "vector_store.name":
-                    config["vector_store"]["name"] = value
-                elif key == "vector_store.url":
-                    config["vector_store"]["url"] = value
-                elif key == "reranker.model":
-                    config["reranker"]["model"] = value
+        for key, value in db_config:
+            if key == "vector_store.embeddings":
+                config["vector_store"]["embeddings"] = value
+            elif key == "vector_store.dims":
+                config["vector_store"]["dims"] = int(value)
+            elif key == "vector_store.name":
+                config["vector_store"]["name"] = value
+            elif key == "vector_store.url":
+                config["vector_store"]["url"] = value
+            elif key == "reranker.model":
+                config["reranker"]["model"] = value
 
         return config
 
     def update_config(self, updates: Dict[str, Any]):
-        with self.conn.cursor() as cursor:
-            for key, value in updates.items():
-                cursor.execute(
-                    """
-                    INSERT INTO app_config (key, value, updated_at) 
-                    VALUES (%s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (key) DO UPDATE SET 
-                    value = EXCLUDED.value, 
-                    updated_at = EXCLUDED.updated_at
-                """,
-                    (key, str(value)),
-                )
-            self.conn.commit()
+        """Update configuration in the database"""
+        update_config(updates)
+        logger.info("✅ Configuration updated in database")
+
+        self.clear_config_info_cache()
 
     def get_embedding_models(self):
         return {"text-embedding-3-small": 1536, "text-embedding-3-large": 3072}

@@ -1,19 +1,20 @@
 import streamlit as st
 import pandas as pd
 import os
-from src.backend.db.core import init_connection
-from src.backend.db.methods import (
-    import_source_concepts,
+from src.backend.db.methods.utils import (
     process_drug_atc7_codes,
-    get_embedding_status,
-    import_all_vocabulary_tables,
-    get_vocabulary_import_status,
-    get_vocabulary_table_counts,
-    check_vocabulary_files_exist,
     get_atc7_statistics,
     get_source_vocabulary_ids,
     get_concept_atc7_count,
 )
+from src.backend.db.methods.imports import (
+    import_source_concepts,
+    import_all_vocabulary_tables,
+    get_vocabulary_import_status,
+    get_vocabulary_table_counts,
+    check_vocabulary_files_exist,
+)
+from src.backend.db.methods.embeddings import get_embedding_status
 from src.backend.auto_mapper import init_automapper
 from src.backend.config_manager import get_config_manager
 from src.backend.utils.logging import (
@@ -22,9 +23,6 @@ from src.backend.utils.logging import (
     log_and_show_success,
     log_and_show_warning,
 )
-
-
-conn = init_connection()
 
 
 def clear_vocab_cache():
@@ -51,7 +49,6 @@ def clear_source_concepts_cache():
     logger.info("Clearing source concepts caches")
 
     get_source_vocabulary_ids.clear()
-    get_embedding_status.clear()
 
 
 def render_vocabulary_import_tab():
@@ -271,7 +268,10 @@ def render_source_concepts_tab():
 
                 with st.spinner("Importing source concepts..."):
                     logger.info("Importing source concepts")
-                    count = import_source_concepts(temp_path, vocabulary_id)
+                    count = import_source_concepts(
+                        temp_path,
+                        vocabulary_id,
+                    )
 
                 # Clear source-related caches after import
                 clear_source_concepts_cache()
@@ -285,11 +285,6 @@ def render_source_concepts_tab():
 
             except Exception as e:
                 log_and_show_error("❌ Error importing source concepts", e)
-
-        if col2.button("Embed After Import (Source)"):
-            st.info(
-                "After importing, go to the 'Embedding Management' tab to embed the concepts."
-            )
 
 
 def render_embedding_management_tab():
@@ -322,114 +317,55 @@ def render_embedding_management_tab():
         log_and_show_error("Error loading configuration", e)
         return
 
-    col1, col2 = st.columns(2)
+    st.write("### Standard Concepts")
 
-    with col1:
-        st.write("### Standard Concepts")
+    try:
+        standard_status = get_embedding_status(auto_mapper.vector_store.name)
 
-        try:
-            standard_status = get_embedding_status("standard_concepts")
+        st.metric("Total Standard Concepts", f"{standard_status['total']:,}")
+        st.metric("Embedded", f"{standard_status['embedded']:,}")
+        progress = standard_status["percentage"] / 100
+        st.progress(progress, text=f"{standard_status['percentage']:.1f}% embedded")
 
-            st.metric("Total Standard Concepts", f"{standard_status['total']:,}")
-            st.metric("Embedded", f"{standard_status['embedded']:,}")
-            progress = standard_status["percentage"] / 100
-            st.progress(progress, text=f"{standard_status['percentage']:.1f}% embedded")
+        # Domain filter
+        domain_filter = st.selectbox(
+            "Filter by Domain (optional)",
+            options=[
+                "All",
+                "Drug",
+                "Device",
+                "Condition",
+                "Procedure",
+                "Measurement",
+                "Observation",
+            ],
+            index=0,
+        )
+        domain_value = None if domain_filter == "All" else domain_filter
 
-            # Domain filter
-            domain_filter = st.selectbox(
-                "Filter by Domain (optional)",
-                options=[
-                    "All",
-                    "Drug",
-                    "Device",
-                    "Condition",
-                    "Procedure",
-                    "Measurement",
-                    "Observation",
-                ],
-                index=0,
-            )
-            domain_value = None if domain_filter == "All" else domain_filter
+        if st.button("🚀 Embed Standard Concepts", type="primary"):
+            with st.spinner("Embedding standard concepts... This may take a while."):
+                logger.info("Embedding standard concepts")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
 
-            if st.button("🚀 Embed Standard Concepts", type="primary"):
-                with st.spinner(
-                    "Embedding standard concepts... This may take a while."
-                ):
-                    logger.info("Embedding standard concepts")
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
+                try:
+                    auto_mapper.embed_all_concepts(
+                        domain_filter=domain_value,
+                        batch_size=st.session_state.get("batch_size_setting", 1000),
+                    )
 
-                    try:
-                        auto_mapper.embed_all_concepts(
-                            domain_filter=domain_value,
-                            batch_size=st.session_state.get("batch_size_setting", 1000),
-                        )
+                    # Clear embedding caches after successful embedding
+                    clear_embedding_caches()
 
-                        # Clear embedding caches after successful embedding
-                        clear_embedding_caches()
+                    progress_bar.progress(1.0)
+                    status_text.success("Standard concepts embedded successfully!")
+                    st.rerun()
+                except Exception as e:
+                    log_and_show_error("Error embedding standard concepts", e)
 
-                        progress_bar.progress(1.0)
-                        status_text.success("Standard concepts embedded successfully!")
-                        st.rerun()
-                    except Exception as e:
-                        log_and_show_error("Error embedding standard concepts", e)
-
-        except Exception as e:
-            log_and_show_error("Error getting embedding status", e)
-
-    with col2:
-        st.write("### Source Concepts")
-
-        try:
-            source_status = get_embedding_status("source_concepts")
-
-            st.metric("Total Source Concepts", f"{source_status['total']:,}")
-            st.metric("Embedded", f"{source_status['embedded']:,}")
-            progress = (
-                source_status["percentage"] / 100 if source_status["total"] > 0 else 0
-            )
-            st.progress(progress, text=f"{source_status['percentage']:.1f}% embedded")
-
-            # Vocabulary filter
-            vocab_ids = get_source_vocabulary_ids()
-
-            vocab_options = ["All"] + [f"Vocabulary {vid}" for vid in vocab_ids]
-            vocab_filter = st.selectbox(
-                "Filter by Vocabulary (optional)",
-                options=vocab_options,
-                index=0,
-                key="source_vocab_filter",
-            )
-
-            vocab_id_value = None
-            if vocab_filter != "All":
-                vocab_id_value = int(vocab_filter.split()[-1])
-
-            if st.button(
-                "🚀 Embed Source Concepts", type="primary", key="embed_source"
-            ):
-                with st.spinner("Embedding source concepts... This may take a while."):
-                    logger.info("Embedding source concepts")
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-
-                    try:
-                        auto_mapper.embed_source_concepts(
-                            vocabulary_id=vocab_id_value,
-                            batch_size=st.session_state.get("batch_size_setting", 1000),
-                        )
-
-                        # Clear embedding caches after successful embedding
-                        clear_embedding_caches()
-
-                        progress_bar.progress(1.0)
-                        status_text.success("Source concepts embedded successfully!")
-                        st.rerun()
-                    except Exception as e:
-                        log_and_show_error("Error embedding source concepts", e)
-
-        except Exception as e:
-            logger.error("Error getting source embedding status", e)
+    except Exception as e:
+        log_and_show_error("Error getting embedding status", e)
 
     # Batch embedding settings
     st.divider()
@@ -451,9 +387,7 @@ def render_embedding_management_tab():
     st.warning("This will remove all embeddings from the vector database.")
 
     if st.button("Clear All Embeddings", type="secondary", key="clear_embeddings"):
-        st.info(
-            "Delete in the Qdrant dashboard at http://localhost:6333/dashboard#/collections"
-        )
+        auto_mapper.vector_store.delete_collection()
 
 
 def render_import_page():

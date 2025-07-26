@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
-from src.backend.db.methods import get_mapped_concepts, unmap_concepts
-from src.frontend.ui.common import display_vocabulary_selector
+from src.backend.db.methods.mapping import get_mapped_concepts, unmap_concepts
+from src.frontend.ui.common import display_vocabulary_selector, clear_mapping_cache
+from src.backend.utils.logging import logger, log_and_show_error
 
 
 def render_commit_page():
@@ -49,10 +50,10 @@ def render_commit_page():
                 try:
                     unmap_concepts(selected_source_ids)
                     st.success(f"Unmapped {len(selected_source_ids)} concepts")
-                    get_mapped_concepts.clear()
+                    clear_mapping_cache()
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error unmapping concepts: {str(e)}")
+                    log_and_show_error("Error unmapping concepts", e)
 
         # Statistics
         cols[1].metric("Total Mappings", len(data))

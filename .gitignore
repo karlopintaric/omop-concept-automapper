@@ -23,6 +23,7 @@ coverage.xml
 .mypy_cache
 .dmypy.json
 dmypy.json
+.pytest_cache/
 
 # IDEs
 .vscode/

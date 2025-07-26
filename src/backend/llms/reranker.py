@@ -1,42 +1,42 @@
-from src.backend.llms.chat_model import ChatModelWithStructuredOutput
-from src.backend.llms.models import RerankerResponse
+from src.backend.llms.chat_model import ChatModel
+from src.backend.llms.output_models import RerankerResponse
 from src.backend.llms.prompt import (
     DRUG_SYSTEM_PROMPT,
     CONCEPT_SYSTEM_PROMPT,
     INPUT_PROMPT,
 )
+from src.backend.utils.logging import logger
 
 
 class Reranker:
     def __init__(
         self,
-        chat_model: str,
+        chat_model: ChatModel,
         drug_specific: bool = False,
     ):
-        system_prompt = DRUG_SYSTEM_PROMPT if drug_specific else CONCEPT_SYSTEM_PROMPT
-
-        self.llm = ChatModelWithStructuredOutput(
-            chat_model, system_prompt, RerankerResponse
+        self.system_prompt = (
+            DRUG_SYSTEM_PROMPT if drug_specific else CONCEPT_SYSTEM_PROMPT
         )
+        self.llm = chat_model
         self.input_prompt = INPUT_PROMPT
 
-    def select_similar(self, input_term: str, candidate_list: list[dict]):
-        print(f"🤖 Reranker called with input: '{input_term}'")
-        print(f"🤖 Candidate list size: {len(candidate_list)}")
+    def select_similar(self, input_term: str, candidate_list: list[dict]) -> dict:
+        logger.info(f"🤖 Reranker called with input: '{input_term}'")
 
         candidate_list_str = self._format_item_list_for_prompt(candidate_list)
         input_text = self.input_prompt.format(
             input_term=input_term, candidate_list=candidate_list_str
         )
 
-        print(f"🤖 Calling LLM with prompt length: {len(input_text)} characters")
-
         try:
-            response = self.llm.chat(input_text)
-            print(f"🤖 LLM response: {response}")
+            response = self.llm.chat(
+                input_text=input_text,
+                system_prompt=self.system_prompt,
+                output_schema=RerankerResponse,  # Pass your structured output model here
+            )
+            logger.info(f"🤖 LLM response: {response}")
 
             result = self._select_similar_with_confidence(response, candidate_list)
-            print(f"🤖 Final result: {result}")
 
             return result
         except Exception as e:
@@ -51,14 +51,13 @@ class Reranker:
     def _select_similar_with_confidence(
         self, response: RerankerResponse, candidate_list: list
     ) -> dict:
-        try:
-            selected_id = int(response.most_similar_item_id)
-            confidence = response.confidence_score
-        except ValueError:
-            selected_id = 0
-            confidence = 0
+        selected_id = int(response.most_similar_item_id)
+        confidence = response.confidence_score
 
-        return {"selected": candidate_list[selected_id], "confidence_score": confidence}
+        return {
+            "selected": candidate_list[selected_id],
+            "confidence_score": confidence,
+        }
 
     def _format_item_list_for_prompt(self, item_list: list[dict]):
         items = []
