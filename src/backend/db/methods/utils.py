@@ -2,7 +2,6 @@ import math
 import re
 
 import streamlit as st
-from psycopg import Connection
 from src.backend.db.core import format_db_response, init_connection
 
 
@@ -141,11 +140,11 @@ def store_atc7_codes_in_db(
 
 
 def process_drug_atc7_codes():
-    atc7_results = find_atc7_codes_for_drug_concepts(conn)
+    atc7_results = find_atc7_codes_for_drug_concepts()
 
     stored_count = 0
     if atc7_results:
-        stored_count = store_atc7_codes_in_db(atc7_results, conn)
+        stored_count = store_atc7_codes_in_db(atc7_results)
 
     return stored_count
 

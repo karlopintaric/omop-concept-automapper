@@ -16,7 +16,8 @@ from src.backend.db.methods.mapping import (
 
 from src.backend.db.methods.embeddings import get_embedding_status
 from src.backend.config_manager import get_config_manager
-from src.backend.utils.logging import logger
+from src.backend.utils.logging import logger, log_and_show_success
+from src.backend.utils.progress import StreamlitProgressTracker
 
 
 class AutoMapper:
@@ -115,14 +116,10 @@ class AutoMapper:
         mapping_method = "auto_drug" if drug_specific else "auto_standard"
 
         # Streamlit progress bar
-        try:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            in_streamlit = True
-        except Exception:
-            progress_bar = None
-            status_text = None
-            in_streamlit = False
+        progress_tracker = StreamlitProgressTracker(
+            total_count=total_concepts,
+            message_template="Processing {current}/{total} concepts...",
+        )
 
         logger.info(f"Starting auto-mapping for {total_concepts} concepts...")
         logger.info(f"Mapping method: {mapping_method}")
@@ -134,12 +131,7 @@ class AutoMapper:
             source_id = source_concept["source_id"]
 
             # Update progress
-            if in_streamlit and progress_bar:
-                progress = (i + 1) / total_concepts
-                progress_bar.progress(progress)
-                status_text.text(
-                    f"Processing concept {i + 1}/{total_concepts}: {source_concept_name[:50]}..."
-                )
+            progress_tracker.update(1)
 
             try:
                 logger.info(
@@ -218,10 +210,7 @@ class AutoMapper:
                 )
                 continue
 
-        # Clear progress indicators
-        if in_streamlit and progress_bar:
-            progress_bar.empty()
-            status_text.empty()
+        progress_tracker.complete("Auto-mapping completed!")
 
         logger.info(
             f"Auto-mapping completed: {mapped_count}/{total_concepts} concepts mapped successfully"
@@ -239,36 +228,19 @@ class AutoMapper:
         logger.info("Starting to embed standard concepts...")
 
         # Check status before embedding
-        status = self.get_embedding_status_for_collection("standard_concepts")
+        status = get_embedding_status(self.vector_store.name, domain_filter)
         pending_count = status["pending"]
 
         if pending_count == 0:
-            logger.info("All standard concepts are already embedded!")
+            log_and_show_success("All concepts are already embedded!")
+
             return
 
-        logger.info(f"Found {pending_count} standard concepts to embed...")
-        self.vector_store.embed_standard_concepts(domain_filter, batch_size)
+        logger.info(f"Found {pending_count}  concepts to embed...")
+        self.vector_store.embed_standard_concepts(
+            pending_count, domain_filter, batch_size
+        )
         logger.info("Standard concepts embedding completed!")
-
-    def embed_source_concepts(self, vocabulary_id: int = None, batch_size: int = 100):
-        """Embed source concepts in the vector database"""
-        logger.info("Starting to embed source concepts...")
-
-        # Check status before embedding
-        status = self.get_embedding_status_for_collection("source_concepts")
-        pending_count = status["pending"]
-
-        if pending_count == 0:
-            logger.info("All source concepts are already embedded!")
-            return
-
-        logger.info(f"Found {pending_count} source concepts to embed...")
-        self.vector_store.embed_source_concepts(vocabulary_id, batch_size)
-        logger.info("Source concepts embedding completed!")
-
-    def get_embedding_status_for_collection(self, table_type: str):
-        """Get the current embedding status"""
-        return get_embedding_status(self.vector_store.name, table_type=table_type)
 
 
 @st.cache_resource

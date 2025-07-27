@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from src.backend.db.methods.mapping import get_mapped_concepts, unmap_concepts
 from src.frontend.ui.common import display_vocabulary_selector, clear_mapping_cache
-from src.backend.utils.logging import logger, log_and_show_error
+from src.backend.utils.logging import log_and_show_error
 
 
 def render_commit_page():

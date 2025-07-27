@@ -31,7 +31,7 @@ services:
     build: .
     ports:
       - "8501:8501"
-    env_file: .env # Add this line
+    env_file: .env
     depends_on:
       postgres-db:
         condition: service_healthy

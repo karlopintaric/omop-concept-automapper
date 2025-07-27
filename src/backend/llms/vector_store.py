@@ -5,6 +5,8 @@ from src.backend.db.methods.embeddings import (
 from src.backend.llms.emb_model import EmbeddingModel
 from qdrant_client import QdrantClient, models
 from src.backend.utils.logging import logger
+from src.backend.utils.progress import StreamlitProgressTracker
+import streamlit as st
 
 
 class VectorDatabase:
@@ -35,17 +37,31 @@ class VectorDatabase:
 
         return formatted_results
 
-    def embed_standard_concepts(self, domain_filter: str = None, batch_size: int = 100):
+    def embed_standard_concepts(
+        self, pending_count: int, domain_filter: str = None, batch_size: int = 100
+    ):
         logger.info("Disabling indexing for better embedding performance...")
         self._toggle_indexing(enable=False)
+
+        total_embedded = 0
+        logger.info("Starting to embed standard concepts...")
+
+        progress_tracker = StreamlitProgressTracker(total_count=pending_count)
 
         try:
             for batch in fetch_standard_concepts(self.name, domain_filter, batch_size):
                 self._embed_batch_standard_concepts(batch)
                 self._update_embedded_concepts_table(batch, "standard_concepts")
 
+                total_embedded += len(batch)
+
+                progress_tracker.update(len(batch))
+
+                logger.info(f"Embedded {total_embedded}/{pending_count} concepts...")
+
         finally:
-            print("Re-enabling indexing...")
+            progress_tracker.complete("Concepts embedded successfully!")
+            logger.info("Re-enabling indexing...")
             self._toggle_indexing(enable=True)
 
     def _embed_batch_standard_concepts(self, batch):
@@ -118,7 +134,6 @@ class VectorDatabase:
         emb_size = len(self.emb_model.embed("test")[0])
 
         if not self.client.collection_exists(self.name):
-            logger.info(f"Creating new collection: {self.name}")
             self.create_new_collection(self.name, emb_size)
         else:
             logger.info(f"Using existing collection: {self.name}")

@@ -17,7 +17,7 @@ class EmbeddingModel(ABC, Generic[T]):
         self.dims: int | None = dims
 
     @abstractmethod
-    def embed(self, text: str, num_retries: int = 3):
+    def embed(self, text: str | list[str], num_retries: int = 3):
         pass
 
     def get_model_name(self) -> str:
@@ -29,7 +29,7 @@ class OpenAIEmbeddingModel(EmbeddingModel[OpenAI]):
     def __init__(self, model: str, client: LLMClient[OpenAI], dims: int | None = None):
         super().__init__(model, client, dims)
 
-    def _create_embeddings(self, text: str):
+    def _create_embeddings(self, text: str | list[str]):
         """Create embeddings using OpenAI's API."""
 
         logger.info("🔗 Creating embeddings with OpenAI API")
@@ -41,10 +41,10 @@ class OpenAIEmbeddingModel(EmbeddingModel[OpenAI]):
             logger.error("❌ No embeddings returned from OpenAI API", exc_info=True)
             raise RuntimeError("No embeddings returned from OpenAI API")
 
-        logger.info(f"✅ Embeddings created successfully for input: '{text}'")
+        logger.info("✅ Embeddings created successfully for input")
         return [emb.embedding for emb in response.data]
 
-    def embed(self, text: str, num_retries: int = 3):
+    def embed(self, text: str | list[str], num_retries: int = 3):
         for attempt in range(1, num_retries + 1):
             try:
                 return self._create_embeddings(text)

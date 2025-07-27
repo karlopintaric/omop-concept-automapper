@@ -1,4 +1,3 @@
-from psycopg import Connection
 import streamlit as st
 
 from src.backend.db.core import format_db_response, init_connection

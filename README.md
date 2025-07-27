@@ -91,7 +91,6 @@ Open your browser and go to: <http://localhost:8501>
 2. Click "Embed Standard Concepts" to create vector embeddings
 3. Only standard concepts will be embedded, with ATC7 metadata for drugs
 4. You can see how many concepts are embedded on [this](http://localhost:6333/dashboard#/collections) page.
-**The UI will not update when the embedding is running but the Qdrant dashboard will**
 
 ### 5. Configure Models
 

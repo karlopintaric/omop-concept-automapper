@@ -1,8 +1,8 @@
-from psycopg import Connection
 import pandas as pd
 import streamlit as st
 
 from src.backend.db.core import format_db_response, init_connection
+from src.backend.utils.logging import logger
 
 conn = init_connection()
 
@@ -82,11 +82,15 @@ def import_vocabulary_with_copy(
                 (table_name, file_path, records_imported, "completed"),
             )
 
+            logger.info(
+                f"Imported {records_imported} records into {table_name} from {file_path}"
+            )
             conn.commit()
 
             return records_imported
 
     except Exception as e:
+        logger.error(f"Error importing {table_name}", exc_info=True)
         conn.rollback()
 
         # Log the error
@@ -173,15 +177,14 @@ def import_all_vocabulary_tables(vocabulary_path: str = "/app/vocabulary"):
     for table, file_info in file_status.items():
         if file_info["exists"]:
             try:
-                records_imported = import_vocabulary_with_copy(
-                    table, file_info["path"], conn
-                )
+                records_imported = import_vocabulary_with_copy(table, file_info["path"])
                 results[table] = {
                     "status": "success",
                     "records_imported": records_imported,
                     "error": None,
                 }
             except Exception as e:
+                logger.error(f"Error importing {table}", exc_info=True)
                 results[table] = {
                     "status": "failed",
                     "records_imported": 0,

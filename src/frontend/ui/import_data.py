@@ -147,17 +147,6 @@ def render_vocabulary_import_tab():
                         f"✅ Successfully imported {success_count} tables with {total_records:,} total records!"
                     )
 
-                # Show detailed results
-                for table, result in results.items():
-                    if result["status"] == "success":
-                        log_and_show_success(
-                            f"✅ {table}: {result['records_imported']:,} records imported"
-                        )
-                    elif result["status"] == "failed":
-                        log_and_show_error(f"❌ {table}: {result['error']}")
-                    else:
-                        log_and_show_warning(f"⚠️ {table}: {result['error']}")
-
                 # Refresh the page to show updated counts
                 st.rerun()
 
@@ -346,8 +335,6 @@ def render_embedding_management_tab():
         if st.button("🚀 Embed Standard Concepts", type="primary"):
             with st.spinner("Embedding standard concepts... This may take a while."):
                 logger.info("Embedding standard concepts")
-                progress_bar = st.progress(0)
-                status_text = st.empty()
 
                 try:
                     auto_mapper.embed_all_concepts(
@@ -358,8 +345,6 @@ def render_embedding_management_tab():
                     # Clear embedding caches after successful embedding
                     clear_embedding_caches()
 
-                    progress_bar.progress(1.0)
-                    status_text.success("Standard concepts embedded successfully!")
                     st.rerun()
                 except Exception as e:
                     log_and_show_error("Error embedding standard concepts", e)

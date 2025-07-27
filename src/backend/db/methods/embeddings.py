@@ -113,26 +113,35 @@ def update_embedded_concepts_table(
 
 
 @st.cache_data(ttl=60)
-def get_embedding_status(collection_name: str):
+def get_embedding_status(
+    collection_name: str, domain_filter: str | None = None
+) -> dict:
     """Get embedding status for concepts"""
-    with conn.cursor() as c:
-        c.execute(
-            """
-            SELECT 
-                COUNT(*) as total_concepts,
-                COUNT(ec.concept_id) as embedded_concepts
-            FROM concept sc
-            LEFT JOIN embedded_concepts ec ON sc.concept_id = ec.concept_id 
-                AND ec.concept_type = 'standard'
-            WHERE sc.standard_concept = 'S'
-            AND (ec.collection_name = %s OR ec.collection_name IS NULL)
-            """,
-            (collection_name,),
-        )
 
+    query = """
+        SELECT 
+            COUNT(*) as total_concepts,
+            COUNT(ec.concept_id) as embedded_concepts
+        FROM concept sc
+        LEFT JOIN embedded_concepts ec ON sc.concept_id = ec.concept_id 
+            AND ec.concept_type = 'standard'
+        WHERE sc.standard_concept = 'S'
+        AND (ec.collection_name = %s OR ec.collection_name IS NULL)
+        AND LOWER(sc.concept_class_id) NOT LIKE %s
+        AND LOWER(sc.concept_class_id) NOT LIKE %s
+        """
+    params = [collection_name, "%box%", "%marketed%"]
+
+    if domain_filter:
+        query += " AND sc.domain_id = %s"
+        params.append(domain_filter)
+
+    with conn.cursor() as c:
+        c.execute(query, params)
         result = c.fetchone()
         return {
             "total": result[0],
             "embedded": result[1],
+            "pending": result[0] - result[1],
             "percentage": (result[1] / result[0] * 100) if result[0] > 0 else 0,
         }
