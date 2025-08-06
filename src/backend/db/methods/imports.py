@@ -101,26 +101,73 @@ def import_source_concepts(
     return len(df)
 
 
-def import_vocabulary_with_copy(
+def drop_table_indexes(cursor, table_name: str):
+    """Drop all non-primary key indexes for a table to speed up bulk operations"""
+    logger.info(f"Dropping indexes for table {table_name}")
+
+    # Get all indexes for the table (excluding primary key)
+    cursor.execute(
+        """
+        SELECT indexname, indexdef 
+        FROM pg_indexes 
+        WHERE tablename = %s 
+        AND schemaname = 'public'
+        AND indexname NOT LIKE '%%_pkey'
+    """,
+        (table_name,),
+    )
+
+    indexes = cursor.fetchall()
+    dropped_indexes = []
+
+    for index_name, index_def in indexes:
+        try:
+            cursor.execute(f"DROP INDEX IF EXISTS {index_name}")
+            dropped_indexes.append((index_name, index_def))
+            logger.info(f"Dropped index: {index_name}")
+        except Exception as e:
+            logger.warning(f"Failed to drop index {index_name}: {e}")
+
+    return dropped_indexes
+
+
+def recreate_indexes(cursor, dropped_indexes: list):
+    """Recreate previously dropped indexes"""
+    logger.info(f"Recreating {len(dropped_indexes)} indexes")
+
+    for index_name, index_def in dropped_indexes:
+        try:
+            cursor.execute(index_def)
+            logger.info(f"Recreated index: {index_name}")
+        except Exception as e:
+            logger.error(f"Failed to recreate index {index_name}: {e}")
+            # Continue with other indexes even if one fails
+
+
+def log_import_result(
+    cursor,
     table_name: str,
     file_path: str,
+    records_imported: int,
+    status: str,
+    error_message: str = None,
 ):
-    """Import vocabulary data using upsert logic to handle duplicates"""
+    """Common function to log import results"""
+    cursor.execute(
+        """
+        INSERT INTO vocabulary_imports 
+        (table_name, file_path, records_imported, status, error_message)
+        VALUES (%s, %s, %s, %s, %s)
+    """,
+        (table_name, file_path, records_imported, status, error_message),
+    )
 
-    # Define temp table and conflict resolution strategies
+
+def import_concept_table_upsert(file_path: str):
+    """Import concept table using upsert logic"""
+    table_name = "concept"
     temp_table = f"temp_{table_name}"
-
-    # Simple conflict column definitions - just the key columns
-    conflict_configs = {
-        "concept": "concept_id",
-        "concept_relationship": "concept_id_1, concept_id_2, relationship_id",
-        "concept_ancestor": "ancestor_concept_id, descendant_concept_id",
-    }
-
-    if table_name not in conflict_configs:
-        raise ValueError(f"Unsupported table for upsert: {table_name}")
-
-    conflict_columns = conflict_configs[table_name]
+    conflict_columns = "concept_id"
 
     try:
         with conn.cursor() as cursor:
@@ -131,6 +178,9 @@ def import_vocabulary_with_copy(
             logger.info(
                 f"Starting upsert import for {table_name} (current count: {count_before})"
             )
+
+            # Drop indexes to speed up the upsert operation
+            dropped_indexes = drop_table_indexes(cursor, table_name)
 
             # Create temporary table with same structure as main table
             cursor.execute(
@@ -154,10 +204,7 @@ def import_vocabulary_with_copy(
                 ORDER BY ordinal_position
             """)
             all_columns = [row[0] for row in cursor.fetchall()]
-            conflict_column_list = [col.strip() for col in conflict_columns.split(",")]
-            update_columns = [
-                col for col in all_columns if col not in conflict_column_list
-            ]
+            update_columns = [col for col in all_columns if col != "concept_id"]
 
             update_set_clause = ", ".join(
                 [f"{col} = EXCLUDED.{col}" for col in update_columns]
@@ -173,6 +220,9 @@ def import_vocabulary_with_copy(
             cursor.execute(upsert_query)
             upserted_count = cursor.rowcount
 
+            # Recreate the indexes that were dropped
+            recreate_indexes(cursor, dropped_indexes)
+
             # Clean up temporary table
             cursor.execute(f"DROP TABLE {temp_table}")
 
@@ -183,13 +233,8 @@ def import_vocabulary_with_copy(
             records_imported = count_after - count_before
 
             # Log the import
-            cursor.execute(
-                """
-                INSERT INTO vocabulary_imports 
-                (table_name, file_path, records_imported, status)
-                VALUES (%s, %s, %s, %s)
-            """,
-                (table_name, file_path, records_imported, "completed"),
+            log_import_result(
+                cursor, table_name, file_path, records_imported, "completed"
             )
 
             logger.info(
@@ -203,20 +248,81 @@ def import_vocabulary_with_copy(
         logger.error(f"Error importing {table_name}", exc_info=True)
         conn.rollback()
 
+        # Try to recreate indexes even if the import failed
+        try:
+            with conn.cursor() as cursor:
+                if "dropped_indexes" in locals():
+                    recreate_indexes(cursor, dropped_indexes)
+        except Exception as index_error:
+            logger.error(f"Failed to recreate indexes after error: {index_error}")
+
         # Log the error
         try:
             with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO vocabulary_imports 
-                    (table_name, file_path, records_imported, status, error_message)
-                    VALUES (%s, %s, %s, %s, %s)
-                """,
-                    (table_name, file_path, 0, "failed", str(e)),
-                )
+                log_import_result(cursor, table_name, file_path, 0, "failed", str(e))
                 conn.commit()
         except Exception:
-            pass  # Don't fail if we can't log the error
+            pass
+
+        raise e
+
+
+def import_table_truncate_copy(
+    table_name: str,
+    file_path: str,
+):
+    """Import relationship/ancestor tables using truncate and copy for faster performance"""
+
+    try:
+        with conn.cursor() as cursor:
+            logger.info(f"Starting truncate and copy import for {table_name}")
+
+            # Drop indexes to speed up the operation
+            dropped_indexes = drop_table_indexes(cursor, table_name)
+
+            # Truncate the table
+            cursor.execute(f"TRUNCATE TABLE {table_name}")
+
+            # Copy data directly into the table
+            copy_command = f"COPY {table_name} FROM '{file_path}' WITH DELIMITER E'\\t' CSV HEADER QUOTE E'\\b'"
+            cursor.execute(copy_command)
+
+            # Recreate the indexes that were dropped
+            recreate_indexes(cursor, dropped_indexes)
+
+            # Get count after import
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            records_imported = cursor.fetchone()[0]
+
+            # Log the import
+            log_import_result(
+                cursor, table_name, file_path, records_imported, "completed"
+            )
+
+            logger.info(f"Imported {records_imported} records into {table_name}")
+            conn.commit()
+
+            return records_imported
+
+    except Exception as e:
+        logger.error(f"Error importing {table_name}", exc_info=True)
+        conn.rollback()
+
+        # Try to recreate indexes even if the import failed
+        try:
+            with conn.cursor() as cursor:
+                if "dropped_indexes" in locals():
+                    recreate_indexes(cursor, dropped_indexes)
+        except Exception as index_error:
+            logger.error(f"Failed to recreate indexes after error: {index_error}")
+
+        # Log the error
+        try:
+            with conn.cursor() as cursor:
+                log_import_result(cursor, table_name, file_path, 0, "failed", str(e))
+                conn.commit()
+        except Exception:
+            pass
 
         raise e
 
@@ -287,7 +393,13 @@ def import_all_vocabulary_tables(vocabulary_path: str = "/app/vocabulary"):
     for table, file_info in file_status.items():
         if file_info["exists"]:
             try:
-                records_imported = import_vocabulary_with_copy(table, file_info["path"])
+                if table == "concept":
+                    records_imported = import_concept_table_upsert(file_info["path"])
+                else:
+                    records_imported = import_table_truncate_copy(
+                        table, file_info["path"]
+                    )
+
                 results[table] = {
                     "status": "success",
                     "records_imported": records_imported,
