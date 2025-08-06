@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS concept_relationship (
 CREATE INDEX IF NOT EXISTS idx_concept_relationship_id_1 ON concept_relationship (concept_id_1);
 CREATE INDEX IF NOT EXISTS idx_concept_relationship_id_2 ON concept_relationship (concept_id_2);
 CREATE INDEX IF NOT EXISTS idx_concept_relationship_id_3 ON concept_relationship (relationship_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_concept_relationship ON concept_relationship (concept_id_1, concept_id_2, relationship_id);
 CREATE TABLE IF NOT EXISTS concept_ancestor (
     ancestor_concept_id INTEGER NOT NULL,
     descendant_concept_id INTEGER NOT NULL,
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS concept_ancestor (
 );
 CREATE INDEX IF NOT EXISTS idx_concept_ancestor_id_1 ON concept_ancestor (ancestor_concept_id);
 CREATE INDEX IF NOT EXISTS idx_concept_ancestor_id_2 ON concept_ancestor (descendant_concept_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_concept_ancestor ON concept_ancestor (ancestor_concept_id, descendant_concept_id);
 -- table to track embedded concepts
 CREATE TABLE IF NOT EXISTS embedded_concepts (
     concept_id INTEGER NOT NULL,

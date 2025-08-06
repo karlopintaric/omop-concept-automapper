@@ -129,13 +129,6 @@ def map_concepts(mappings: list):
             values,
         )
 
-        # Update mapped status for source concepts
-        placeholders = ",".join(["%s" for _ in source_ids])
-        cursor.execute(
-            f"UPDATE source_concepts SET mapped = TRUE WHERE source_id IN ({placeholders})",
-            source_ids,
-        )
-
         conn.commit()
 
 
@@ -148,11 +141,6 @@ def unmap_concepts(
 
         cursor.execute(
             f"DELETE FROM source_standard_map WHERE source_id IN ({placeholders})",
-            source_ids,
-        )
-
-        cursor.execute(
-            f"UPDATE source_concepts SET mapped = FALSE WHERE source_id IN ({placeholders})",
             source_ids,
         )
 

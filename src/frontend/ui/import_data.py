@@ -214,16 +214,26 @@ def render_source_concepts_tab():
     st.subheader("Import Source Concepts")
     st.markdown("""
     Upload a CSV file containing your source concepts that need to be mapped to OMOP. The file should be comma delimited, not tab (like OMOP vocabularies).
+    
     Required columns:
     - `source_value`: Source concept code/value
     - `source_concept_name`: Name or description of the source concept
+                
+    Optional columns:
     - `freq` (optional): Frequency/count of usage
+    - `concept_id` (optional): OMOP concept ID(s) for existing mappings. For multiple mappings, separate concept IDs with semicolons (e.g., "1234;5678;9012")
     """)
 
     st.info("""
     💡 **Drug-Specific Mapping Enhancement**: 
     For drug vocabularies, if your `source_value` starts with an ATC7 code (e.g., 'A10BA02XYZ'), 
     the system will use this code to limit search space during drug-specific mapping.
+    """)
+
+    st.info("""
+    💡 **Existing Mappings**: 
+    If your CSV includes a `concept_id` column, existing mappings will be imported automatically. 
+    Use semicolons to separate multiple concept IDs (e.g., "123456;789012").
     """)
 
     source_file = st.file_uploader(

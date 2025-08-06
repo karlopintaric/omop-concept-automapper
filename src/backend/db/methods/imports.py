@@ -20,30 +20,81 @@ def import_source_concepts(
     if missing_columns:
         raise ValueError(f"Missing required columns: {missing_columns}")
 
+    # Check if concept_id column exists for existing mappings
+    has_concept_id_column = "concept_id" in df.columns
+
     # Insert data in batches
     batch_size = 1000
     with conn.cursor() as cursor:
         for i in range(0, len(df), batch_size):
             batch = df.iloc[i : i + batch_size]
             values = []
+            mapping_data = []
 
             for _, row in batch.iterrows():
+                # Parse concept_id column if it exists
+                concept_ids = []
+
+                if has_concept_id_column and pd.notna(row.get("concept_id")):
+                    concept_id_str = str(row["concept_id"]).strip()
+                    if concept_id_str:
+                        # Handle multiple concept IDs separated by semicolons
+                        for cid in concept_id_str.split(";"):
+                            cid = cid.strip()
+                            if cid.isdigit():
+                                concept_ids.append(int(cid))
+
                 values.append(
                     (
                         row["source_value"],
                         row["source_concept_name"],
                         vocabulary_id,
-                        row.get("freq", 1),  # Default frequency to 1 if not provided
-                        False,  # mapped = False by default
+                        row.get("freq", 1),
                     )
                 )
+                mapping_data.append(concept_ids)
 
+            # Insert source concepts
             cursor.executemany(
                 """INSERT INTO source_concepts 
-                   (source_value, source_concept_name, source_vocabulary_id, freq, mapped) 
-                   VALUES (%s, %s, %s, %s, %s)""",
+                   (source_value, source_concept_name, source_vocabulary_id, freq) 
+                   VALUES (%s, %s, %s, %s) RETURNING source_id""",
                 values,
             )
+
+            # Get the inserted source_ids
+            source_ids = [row[0] for row in cursor.fetchall()]
+
+            # Insert mappings for valid concept IDs
+            mapping_values = []
+            if any(mapping_data):
+                # Get all unique concept IDs to validate
+                all_concept_ids = list(
+                    set([cid for concepts in mapping_data for cid in concepts])
+                )
+
+                if all_concept_ids:
+                    # Check which concept IDs exist
+                    placeholders = ",".join(["%s"] * len(all_concept_ids))
+                    cursor.execute(
+                        f"SELECT concept_id FROM concept WHERE concept_id IN ({placeholders})",
+                        all_concept_ids,
+                    )
+                    valid_concept_ids = {row[0] for row in cursor.fetchall()}
+
+                    # Create mappings for valid concept IDs only
+                    for idx, concept_ids in enumerate(mapping_data):
+                        source_id = source_ids[idx]
+                        for concept_id in concept_ids:
+                            if concept_id in valid_concept_ids:
+                                mapping_values.append((source_id, concept_id))
+
+            # Insert valid mappings
+            if mapping_values:
+                cursor.executemany(
+                    "INSERT INTO source_standard_map (source_id, concept_id) VALUES (%s, %s)",
+                    mapping_values,
+                )
 
         conn.commit()
 
@@ -54,8 +105,22 @@ def import_vocabulary_with_copy(
     table_name: str,
     file_path: str,
 ):
-    # Create the COPY command using CDM VocabImport syntax
-    copy_command = f"COPY {table_name} FROM '{file_path}' WITH DELIMITER E'\\t' CSV HEADER QUOTE E'\\b'"
+    """Import vocabulary data using upsert logic to handle duplicates"""
+
+    # Define temp table and conflict resolution strategies
+    temp_table = f"temp_{table_name}"
+
+    # Simple conflict column definitions - just the key columns
+    conflict_configs = {
+        "concept": "concept_id",
+        "concept_relationship": "concept_id_1, concept_id_2, relationship_id",
+        "concept_ancestor": "ancestor_concept_id, descendant_concept_id",
+    }
+
+    if table_name not in conflict_configs:
+        raise ValueError(f"Unsupported table for upsert: {table_name}")
+
+    conflict_columns = conflict_configs[table_name]
 
     try:
         with conn.cursor() as cursor:
@@ -63,8 +128,53 @@ def import_vocabulary_with_copy(
             cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
             count_before = cursor.fetchone()[0]
 
-            # Execute the COPY command
+            logger.info(
+                f"Starting upsert import for {table_name} (current count: {count_before})"
+            )
+
+            # Create temporary table with same structure as main table
+            cursor.execute(
+                f"CREATE TEMP TABLE {temp_table} (LIKE {table_name} INCLUDING ALL)"
+            )
+
+            # Load data into temporary table using COPY
+            copy_command = f"COPY {temp_table} FROM '{file_path}' WITH DELIMITER E'\\t' CSV HEADER QUOTE E'\\b'"
             cursor.execute(copy_command)
+
+            # Get count of records in temp table
+            cursor.execute(f"SELECT COUNT(*) FROM {temp_table}")
+            temp_count = cursor.fetchone()[0]
+            logger.info(f"Loaded {temp_count} records into temporary table")
+
+            # Get all columns and build dynamic upsert query
+            cursor.execute(f"""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = '{table_name}' AND table_schema = 'public'
+                ORDER BY ordinal_position
+            """)
+            all_columns = [row[0] for row in cursor.fetchall()]
+            conflict_column_list = [col.strip() for col in conflict_columns.split(",")]
+            update_columns = [
+                col for col in all_columns if col not in conflict_column_list
+            ]
+
+            update_set_clause = ", ".join(
+                [f"{col} = EXCLUDED.{col}" for col in update_columns]
+            )
+            upsert_query = f"""
+                INSERT INTO {table_name} 
+                SELECT * FROM {temp_table}
+                ON CONFLICT ({conflict_columns}) 
+                DO UPDATE SET {update_set_clause}
+            """
+
+            # Execute upsert
+            cursor.execute(upsert_query)
+            upserted_count = cursor.rowcount
+
+            # Clean up temporary table
+            cursor.execute(f"DROP TABLE {temp_table}")
 
             # Get count after import
             cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
@@ -83,7 +193,7 @@ def import_vocabulary_with_copy(
             )
 
             logger.info(
-                f"Imported {records_imported} records into {table_name} from {file_path}"
+                f"Upserted {upserted_count} records ({records_imported} net new) into {table_name} from {file_path}"
             )
             conn.commit()
 

@@ -84,6 +84,9 @@ Open your browser and go to: <http://localhost:8501>
 1. Go to "Import Data" → "Source Concepts"
 2. Upload your CSV file with source concepts that need mapping
 3. Required columns: `source_value`, `source_concept_name`
+4. Optional columns:
+   - `freq`: Frequency/count of usage
+   - `concept_id`: Existing OMOP concept ID mappings (supports one-to-many with semicolon separation, e.g., "123456;789012")
 
 ### 4. Embed Concepts
 
