@@ -11,94 +11,110 @@ def import_source_concepts(
     csv_path: str,
     vocabulary_id: int,
 ):
-    df = pd.read_csv(csv_path)
+    try:
+        df = pd.read_csv(csv_path)
 
-    # Ensure required columns exist
-    required_columns = ["source_value", "source_concept_name"]
-    missing_columns = [col for col in required_columns if col not in df.columns]
+        # Clean up freq column - replace NaN with 1
+        if "freq" in df.columns:
+            df["freq"] = df["freq"].fillna(1).astype(int)
 
-    if missing_columns:
-        raise ValueError(f"Missing required columns: {missing_columns}")
+        # Ensure required columns exist
+        required_columns = ["source_value", "source_concept_name"]
+        missing_columns = [col for col in required_columns if col not in df.columns]
 
-    # Check if concept_id column exists for existing mappings
-    has_concept_id_column = "concept_id" in df.columns
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
 
-    # Insert data in batches
-    batch_size = 1000
-    with conn.cursor() as cursor:
-        for i in range(0, len(df), batch_size):
-            batch = df.iloc[i : i + batch_size]
-            values = []
-            mapping_data = []
+        # Check if concept_id column exists for existing mappings
+        has_concept_id_column = "concept_id" in df.columns
 
-            for _, row in batch.iterrows():
-                # Parse concept_id column if it exists
-                concept_ids = []
+        # Insert data in batches
+        batch_size = 1000
+        with conn.cursor() as cursor:
+            for i in range(0, len(df), batch_size):
+                batch = df.iloc[i : i + batch_size]
+                values = []
+                mapping_data = []
 
-                if has_concept_id_column and pd.notna(row.get("concept_id")):
-                    concept_id_str = str(row["concept_id"]).strip()
-                    if concept_id_str:
-                        # Handle multiple concept IDs separated by semicolons
-                        for cid in concept_id_str.split(";"):
-                            cid = cid.strip()
-                            if cid.isdigit():
-                                concept_ids.append(int(cid))
+                for _, row in batch.iterrows():
+                    # Parse concept_id column if it exists
+                    concept_ids = []
+                    if has_concept_id_column and pd.notna(row.get("concept_id")):
+                        concept_id_str = str(row["concept_id"]).strip()
+                        if concept_id_str and concept_id_str != "nan":
+                            # Handle multiple concept IDs separated by semicolons
+                            for cid in concept_id_str.split(";"):
+                                cid = cid.strip()
+                                if cid.isdigit():
+                                    concept_ids.append(int(cid))
 
-                values.append(
-                    (
-                        row["source_value"],
-                        row["source_concept_name"],
-                        vocabulary_id,
-                        row.get("freq", 1),
+                    values.append(
+                        (
+                            row["source_value"],
+                            row["source_concept_name"],
+                            vocabulary_id,
+                            row.get("freq", 1),
+                        )
                     )
-                )
-                mapping_data.append(concept_ids)
+                    mapping_data.append(concept_ids)
 
-            # Insert source concepts
-            cursor.executemany(
-                """INSERT INTO source_concepts 
-                   (source_value, source_concept_name, source_vocabulary_id, freq) 
-                   VALUES (%s, %s, %s, %s) RETURNING source_id""",
-                values,
-            )
+                if not values:
+                    continue
 
-            # Get the inserted source_ids
-            source_ids = [row[0] for row in cursor.fetchall()]
+                try:
+                    source_ids = []
+                    for value in values:
+                        cursor.execute(
+                            """INSERT INTO source_concepts 
+                               (source_value, source_concept_name, source_vocabulary_id, freq) 
+                               VALUES (%s, %s, %s, %s) RETURNING source_id""",
+                            value,
+                        )
+                        source_ids.append(cursor.fetchone()[0])
 
-            # Insert mappings for valid concept IDs
-            mapping_values = []
-            if any(mapping_data):
-                # Get all unique concept IDs to validate
-                all_concept_ids = list(
-                    set([cid for concepts in mapping_data for cid in concepts])
-                )
+                    # Insert mappings for valid concept IDs
+                    mapping_values = []
+                    if any(mapping_data):
+                        # Get all unique concept IDs to validate
+                        all_concept_ids = list(
+                            set([cid for concepts in mapping_data for cid in concepts])
+                        )
 
-                if all_concept_ids:
-                    # Check which concept IDs exist
-                    placeholders = ",".join(["%s"] * len(all_concept_ids))
-                    cursor.execute(
-                        f"SELECT concept_id FROM concept WHERE concept_id IN ({placeholders})",
-                        all_concept_ids,
-                    )
-                    valid_concept_ids = {row[0] for row in cursor.fetchall()}
+                        if all_concept_ids:
+                            # Check which concept IDs exist
+                            placeholders = ",".join(["%s"] * len(all_concept_ids))
+                            cursor.execute(
+                                f"SELECT concept_id FROM concept WHERE concept_id IN ({placeholders})",
+                                all_concept_ids,
+                            )
+                            valid_concept_ids = {row[0] for row in cursor.fetchall()}
 
-                    # Create mappings for valid concept IDs only
-                    for idx, concept_ids in enumerate(mapping_data):
-                        source_id = source_ids[idx]
-                        for concept_id in concept_ids:
-                            if concept_id in valid_concept_ids:
-                                mapping_values.append((source_id, concept_id))
+                            # Create mappings for valid concept IDs only
+                            for idx, concept_ids in enumerate(mapping_data):
+                                source_id = source_ids[idx]
+                                for concept_id in concept_ids:
+                                    if concept_id in valid_concept_ids:
+                                        mapping_values.append((source_id, concept_id))
 
-            # Insert valid mappings
-            if mapping_values:
-                cursor.executemany(
-                    "INSERT INTO source_standard_map (source_id, concept_id) VALUES (%s, %s)",
-                    mapping_values,
-                )
+                    # Insert valid mappings
+                    if mapping_values:
+                        cursor.executemany(
+                            "INSERT INTO source_standard_map (source_id, concept_id) VALUES (%s, %s)",
+                            mapping_values,
+                        )
 
-        conn.commit()
+                except Exception as e:
+                    logger.error(f"Database error in batch: {e}")
+                    conn.rollback()
+                    raise
 
-    return len(df)
+            conn.commit()
+
+        return len(df)
+
+    except Exception as e:
+        logger.error(f"Error importing source concepts: {e}")
+        raise
 
 
 def drop_table_indexes(cursor, table_name: str):

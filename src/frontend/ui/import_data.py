@@ -230,12 +230,6 @@ def render_source_concepts_tab():
     the system will use this code to limit search space during drug-specific mapping.
     """)
 
-    st.info("""
-    💡 **Existing Mappings**: 
-    If your CSV includes a `concept_id` column, existing mappings will be imported automatically. 
-    Use semicolons to separate multiple concept IDs (e.g., "123456;789012").
-    """)
-
     source_file = st.file_uploader(
         "Upload Source Concepts CSV",
         type=["csv"],
