@@ -1,6 +1,5 @@
 import streamlit as st
 from typing import Dict, Any
-from src.backend.db.core import init_connection
 from src.backend.db.methods.config import (
     create_config_table,
     set_default_config,
@@ -73,6 +72,10 @@ class ConfigManager:
 
     def create_new_collection_name(self, embedding_model: str, dims: int) -> str:
         """Generate a new collection name based on model and dimensions"""
+        # Defaul emb model
+        if embedding_model == 'text-embedding-3-large':
+            return "omop_vocab"
+        
         model_short = embedding_model.replace("text-embedding-", "").replace("-", "")
         return f"omop_vocab_{model_short}_{dims}"
 

@@ -44,6 +44,7 @@ class ChatModelWithStructuredOutput(ChatModel[OpenAI]):
                 model=self.model,
                 messages=messages,
                 response_format=output_schema,
+                temperature=0
             )
 
             logger.info("🔗 API call successful, response received")

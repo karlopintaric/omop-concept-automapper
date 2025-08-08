@@ -66,7 +66,7 @@ class AutoMapper:
         drug_specific: bool = False,
         atc7_codes: list | None = None,
     ):
-        k = 25 if drug_specific else 10
+        k = 30 if drug_specific else 15
         reranker_type = "drug" if drug_specific else "concept"
 
         matched_concepts = _self.get_similar_concepts(

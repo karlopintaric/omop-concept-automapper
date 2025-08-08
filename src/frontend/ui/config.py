@@ -89,6 +89,15 @@ def render_config_page():
                 help=f"Higher dimensions provide better accuracy but are slower. Max for {new_embedding_model}: {max(available_dims)}",
             )
 
+            st.warning("""
+            ⚠️ **Note if changing embedding configuration!**
+            
+            This will require:
+            1. Creating a new vector collection
+            2. Re-embedding all concepts (this may take time and cost money)
+            3. Previous embeddings will be preserved but not used
+            """)
+
         # Check if embedding config changed
         embedding_changed = (
             new_embedding_model != current_config["vector_store"]["embeddings"]
@@ -99,15 +108,6 @@ def render_config_page():
         url_changed = new_qdrant_url != current_config["vector_store"]["url"]
 
         if embedding_changed:
-            st.warning("""
-            ⚠️ **Embedding configuration will change!**
-            
-            This will require:
-            1. Creating a new vector collection
-            2. Re-embedding all concepts (this may take time and cost money)
-            3. Previous embeddings will be preserved but not used
-            """)
-
             new_collection_name = config_manager.create_new_collection_name(
                 new_embedding_model, new_dims
             )

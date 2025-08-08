@@ -14,7 +14,7 @@ from src.backend.db.methods.imports import (
     get_vocabulary_table_counts,
     check_vocabulary_files_exist,
 )
-from src.backend.db.methods.embeddings import get_embedding_status
+from src.backend.db.methods.embeddings import get_embedding_status, reset_embeddings_status
 from src.backend.auto_mapper import init_automapper
 from src.backend.config_manager import get_config_manager
 from src.backend.utils.logging import (
@@ -377,7 +377,11 @@ def render_embedding_management_tab():
 
     if st.button("Clear All Embeddings", type="secondary", key="clear_embeddings"):
         auto_mapper.vector_store.delete_collection()
+        reset_embeddings_status(auto_mapper.vector_store.name)
 
+        # Clear cache
+        st.cache_resource.clear()
+        clear_embedding_caches()
 
 def render_import_page():
     """Main render function for the import page"""

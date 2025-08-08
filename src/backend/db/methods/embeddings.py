@@ -145,3 +145,22 @@ def get_embedding_status(
             "pending": result[0] - result[1],
             "percentage": (result[1] / result[0] * 100) if result[0] > 0 else 0,
         }
+
+
+def reset_embeddings_status(collection_name: str):
+    logger.info(f"Resetting embeddings status for collection: {collection_name}")
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM embedded_concepts
+                WHERE collection_name = %s
+                """,
+                (collection_name,)
+            )
+        conn.commit()
+    except Exception as e:
+        logger.error("Failed to reset embeddings status", exc_info=True)
+        conn.rollback()
+        raise
