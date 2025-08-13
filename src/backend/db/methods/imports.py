@@ -436,3 +436,17 @@ def import_all_vocabulary_tables(vocabulary_path: str = "/app/vocabulary"):
             }
 
     return results
+
+
+def delete_source_concepts_from_db(vocabulary_id: int) -> int:
+    if not vocabulary_id:
+        return 0
+
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM source_concepts WHERE source_vocabulary_id = %s RETURNING source_id",
+            (vocabulary_id,)
+        )
+        deleted_rows = cursor.rowcount
+        conn.commit()
+    return deleted_rows

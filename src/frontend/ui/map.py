@@ -48,8 +48,25 @@ SEARCH_RESULTS_COLUMNS = {
     )
 }
 
+def init_session_states():
+    if "domains" not in st.session_state:
+        st.session_state.domains = []
+
+    if "search_method" not in st.session_state:
+        st.session_state.search_method = "Standard similarity"
+
+    # Track the last searched concept name to detect Enter key changes
+    if "last_search_name" not in st.session_state:
+        st.session_state.last_search_name = ""
+
+    # Track the last search parameters to detect filter changes
+    if "last_search_params" not in st.session_state:
+        st.session_state.last_search_params = {}
+
 
 def initialize_page_controls(vocabulary_id: int, is_drug_vocabulary: bool = False):
+    init_session_states()
+
     cols = st.columns((1, 1, 2, 3), vertical_alignment="bottom")
 
     # Page size selection
@@ -79,7 +96,6 @@ def initialize_page_controls(vocabulary_id: int, is_drug_vocabulary: bool = Fals
         target_domains = st.multiselect(
             "Select domains for auto-mapping:",
             options=DOMAINS,
-            default=st.session_state.get("auto_map_domains", []),
             help="Choose which OMOP domains to map concepts to",
             key="auto_map_domains",
         )
@@ -164,49 +180,67 @@ def display_data_table(vocabulary_id: int, current_page: int, batch_size: int):
     return event.selection.rows, data
 
 
-def display_concept_details(
-    concept_data: dict, auto_mapper: AutoMapper, is_drug_vocabulary: bool
-):
+def display_concept_details(concept_data: dict, auto_mapper: AutoMapper, is_drug_vocabulary: bool):
     st.subheader(f"📝 Mapping: {concept_data['source_concept_name']}")
 
-    # Concept information row
+    # Layout columns
     cols = st.columns((3, 1, 1, 2, 2), vertical_alignment="bottom", gap="large")
 
+    # Text input with key to track changes
     concept_name_input = cols[0].text_input(
-        value=concept_data["source_concept_name"],
         label="Source concept name",
+        value=concept_data["source_concept_name"],
         help="Edit the name to search for better matches",
+        key="concept_name_input",
     )
 
+    # Concept info
     cols[1].markdown(f"**Source ID:** {concept_data['source_id']}")
     cols[2].markdown(f"**Frequency:** {concept_data['freq']}")
 
-    # Search filters
+    # Search filters in popover
     with cols[3].popover("🔍 Search Filters"):
         search_params = _render_search_filters(
             is_drug_vocabulary, concept_data.get("source_value", "")
         )
 
-    results = []
-    # Search for similar concepts
-    if cols[4].button("🔍 Search Similar Concepts", type="primary"):
+    # Centralized search function
+    def perform_search():
+        """Perform search using current input and filters"""
         with st.spinner("Searching for similar concepts..."):
             results, search_method = _perform_concept_search(
-                auto_mapper, concept_name_input, search_params
+                auto_mapper, st.session_state.concept_name_input, search_params
             )
             st.session_state.search_method = search_method
+            st.session_state.last_search_name = st.session_state.concept_name_input
+            return results
 
+    # Trigger search if:
+    # 1. Button clicked
+    # 2. Concept name changed
+    # 3. Filters changed
+    filters_changed = search_params != st.session_state.get("last_search_params")
+    search_triggered = (
+        cols[4].button("🔍 Search Similar Concepts", type="primary") or
+        st.session_state.concept_name_input != st.session_state.get("last_search_name") or
+        filters_changed
+    )
+
+    if search_triggered:
+        results = perform_search()
+        st.session_state.last_search_params = search_params
+    else:
+        results = []
+
+    # Auto-search on first load if no results
     if not results:
-        # Auto-search on first load with default filters
         with st.spinner("Searching for similar concepts..."):
             auto_search_params = {
-                "domains": st.session_state.get("domains", []),
+                "domains": st.session_state.domains,
                 "vocabulary_filter": "",
                 "limit": DEFAULT_SEARCH_LIMIT,
                 "use_atc7_filter": is_drug_vocabulary,
-                "atc7_codes": extract_atc7_codes_from_source(
-                    concept_data.get("source_value")
-                ),
+                "atc7_codes": extract_atc7_codes_from_source(concept_data.get("source_value")),
             }
             results, search_method = _perform_concept_search(
                 auto_mapper, concept_name_input, auto_search_params
@@ -214,17 +248,12 @@ def display_concept_details(
             st.session_state.search_method = f"Auto {search_method}"
 
     if not results:
-        st.warning(
-            "No similar concepts found. Try adjusting your search term or filters."
-        )
+        st.warning("No similar concepts found. Try adjusting your search term or filters.")
         return
 
     # Display results
     st.divider()
-
-    # Show search method used
-    search_method = st.session_state.get("search_method", "Standard similarity")
-    st.caption(f"🔍 Search method: {search_method}")
+    st.caption(f"🔍 Search method: {st.session_state.get('search_method', 'Standard similarity')}")
 
     cols = st.columns((3, 1), vertical_alignment="top", gap="large")
 
@@ -238,9 +267,8 @@ def display_concept_details(
             column_config=SEARCH_RESULTS_COLUMNS,
         )
 
-    # Manual concept ID entry option
-    manual_concept_ids = ""
-    with cols[0]:
+        # Manual concept ID entry option
+        manual_concept_ids = ""
         if st.checkbox(
             "💡 Enter concept IDs manually", help="If you know specific concept IDs"
         ):
@@ -250,7 +278,7 @@ def display_concept_details(
                 help="Enter one or more concept IDs separated by semicolons",
             )
 
-    # Handle concept selection and mapping
+    # Handle selection and mapping
     selected_concepts = _handle_concept_selection(
         results, concept_selection_event, manual_concept_ids
     )
@@ -259,9 +287,7 @@ def display_concept_details(
         _display_selected_concepts_and_map(selected_concepts, concept_data, cols)
     else:
         with cols[1]:
-            st.info(
-                "👆 Select concepts from the table to map them to this source concept."
-            )
+            st.info("👆 Select concepts from the table to map them to this source concept.")
 
 
 def display_mapping_statistics(vocabulary_id: int):
@@ -464,7 +490,7 @@ def _render_search_filters(is_drug_vocabulary: bool, source_value: str) -> dict:
     search_params["domains"] = st.multiselect(
         "Select domains to search in:",
         options=DOMAINS,
-        default=st.session_state.get("domains", []),
+        default=st.session_state.domains,
         help="Narrow search to specific OMOP domains",
     )
     st.session_state.domains = search_params["domains"]

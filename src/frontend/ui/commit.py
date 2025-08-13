@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from src.backend.db.methods.imports import delete_source_concepts_from_db
 from src.backend.db.methods.mapping import get_mapped_concepts, unmap_concepts
 from src.frontend.ui.common import display_vocabulary_selector, clear_mapping_cache
 from src.backend.utils.logging import log_and_show_error
@@ -54,15 +55,10 @@ def render_commit_page():
                     st.rerun()
                 except Exception as e:
                     log_and_show_error("Error unmapping concepts", e)
-
-        # Statistics
-        cols[1].metric("Total Mappings", len(data))
-        unique_concepts = data["concept_id"].nunique()
-        cols[2].metric("Unique OMOP Concepts", unique_concepts)
-
+        
         # Download button
         csv_data = data.to_csv(index=False).encode("utf-8")
-        cols[3].download_button(
+        cols[1].download_button(
             "📥 Download CSV",
             csv_data,
             f"vocabulary_{vocabulary_id}_mappings.csv",
@@ -71,9 +67,19 @@ def render_commit_page():
             type="secondary",
         )
 
+        # Statistics
+        cols[2].metric("Total Mappings", len(data))
+        unique_concepts = data["concept_id"].nunique()
+        cols[3].metric("Unique OMOP Concepts", unique_concepts)
+
+
+
         # Export to final format button
-        if cols[4].button(label="🚀 Export Final", type="primary", disabled=True):
-            st.success("Mappings exported successfully to something (not implemented)!")
+        if cols[4].button("🗑️ Delete Source Vocabulary"):
+            deleted_count = delete_source_concepts_from_db(vocabulary_id)
+            st.success(f"Deleted {deleted_count} source concepts for vocabulary ID {vocabulary_id}.")
+            clear_mapping_cache()
+            st.rerun()
 
         # Display mapping quality metrics
         st.divider()

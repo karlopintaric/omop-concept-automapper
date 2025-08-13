@@ -35,6 +35,7 @@ def display_vocabulary_selector():
 def clear_mapping_cache():
     """Clear the cache for mapping-related functions"""
     # Clear specific cache functions
+    get_source_vocabulary_ids()
     get_unmapped_source_concepts.clear()
     get_mapped_concepts.clear()
     get_total_pages.clear()
