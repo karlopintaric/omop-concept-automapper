@@ -68,14 +68,21 @@ class ConfigManager:
         return {"text-embedding-3-small": 1536, "text-embedding-3-large": 3072}
 
     def get_llm_models(self):
-        return ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini"]
+        return [
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
+        ]
 
     def create_new_collection_name(self, embedding_model: str, dims: int) -> str:
         """Generate a new collection name based on model and dimensions"""
         # Defaul emb model
-        if embedding_model == 'text-embedding-3-large':
+        if embedding_model == "text-embedding-3-large":
             return "omop_vocab"
-        
+
         model_short = embedding_model.replace("text-embedding-", "").replace("-", "")
         return f"omop_vocab_{model_short}_{dims}"
 
