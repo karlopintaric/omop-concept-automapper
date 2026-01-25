@@ -257,6 +257,11 @@ def import_concept_table_upsert(file_path: str):
                 f"Upserted {upserted_count} records ({records_imported} net new) into {table_name} from {file_path}"
             )
             conn.commit()
+            
+            # Post-import cleanup: remove mappings to non-standard concepts
+            logger.info("Cleaning up non-standard mappings after vocabulary update...")
+            cleaned_mappings = clean_non_standard_mappings()
+            logger.info(f"Removed {cleaned_mappings} mappings to non-standard concepts")
 
             return records_imported
 
@@ -450,3 +455,165 @@ def delete_source_concepts_from_db(vocabulary_id: int) -> int:
         deleted_rows = cursor.rowcount
         conn.commit()
     return deleted_rows
+
+
+def clean_non_standard_mappings() -> int:
+    """
+    Remove mappings to concepts that are no longer standard.
+    Returns the number of mappings removed.
+    """
+    with conn.cursor() as cursor:
+        # Delete mappings where the concept is not standard anymore
+        cursor.execute(
+            """
+            DELETE FROM source_standard_map
+            WHERE concept_id IN (
+                SELECT concept_id 
+                FROM concept 
+                WHERE standard_concept IS NULL OR standard_concept != 'S'
+            )
+            """
+        )
+        deleted_count = cursor.rowcount
+        conn.commit()
+        
+        logger.info(f"Removed {deleted_count} mappings to non-standard concepts")
+        return deleted_count
+
+
+
+
+
+def update_qdrant_after_vocabulary_import(vector_db, batch_size=500):
+    """
+    Update Qdrant metadata for all standard concepts in the current collection.
+    Only updates concepts that have been embedded in this collection.
+    Also removes concepts from Qdrant that are no longer standard.
+    """
+    if vector_db is None:
+        return 0, 0
+    
+    try:
+        logger.info(f"Syncing Qdrant collection: {vector_db.name}")
+        
+        # 1. DELETE: Find concepts in embedded_concepts that are no longer standard
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT ec.concept_id 
+                FROM embedded_concepts ec
+                LEFT JOIN concept c ON ec.concept_id = c.concept_id
+                WHERE ec.collection_name = %s
+                AND ec.concept_type = 'standard'
+                AND (c.standard_concept IS NULL OR c.standard_concept != 'S')
+                """,
+                (vector_db.name,)
+            )
+            ids_to_remove = [row[0] for row in cursor.fetchall()]
+            
+        deleted_count = 0
+        if ids_to_remove:
+            logger.info(f"Found {len(ids_to_remove)} non-standard concepts to remove from Qdrant")
+            
+            from src.backend.utils.progress import StreamlitProgressTracker
+            progress_tracker = StreamlitProgressTracker(total_count=len(ids_to_remove))
+            
+            try:
+                # Remove from Qdrant
+                # Process in batches of 1000 for deletion
+                from qdrant_client import models
+                for i in range(0, len(ids_to_remove), 1000):
+                    batch_ids = ids_to_remove[i:i + 1000]
+                    vector_db.client.delete(
+                        collection_name=vector_db.name,
+                        points_selector=models.PointIdsList(points=batch_ids)
+                    )
+                    progress_tracker.update(len(batch_ids))
+            finally:
+                progress_tracker.complete("Cleanup completed!")
+            
+            # Remove from embedded_concepts table
+            with conn.cursor() as cursor:
+                placeholders = ",".join(["%s"] * len(ids_to_remove))
+                cursor.execute(
+                    f"""
+                    DELETE FROM embedded_concepts 
+                    WHERE collection_name = %s 
+                    AND concept_id IN ({placeholders})
+                    """,
+                    [vector_db.name] + ids_to_remove
+                )
+                deleted_count = cursor.rowcount
+            conn.commit()
+            logger.info(f"Removed {deleted_count} non-standard concepts from tracking table")
+
+        # 2. UPDATE: Fetch all standard concept IDs that are embedded in this collection
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.concept_id 
+                FROM concept c
+                JOIN embedded_concepts ec ON c.concept_id = ec.concept_id
+                WHERE c.standard_concept = 'S'
+                AND ec.collection_name = %s
+                AND ec.concept_type = 'standard'
+                """,
+                (vector_db.name,)
+            )
+            concept_ids = [row[0] for row in cursor.fetchall()]
+        
+        updated_count = 0
+        if concept_ids:
+            updated_count = vector_db.update_concept_metadata(
+                concept_ids, 
+                include_atc7=True,
+                batch_size=batch_size
+            )
+        else:
+            logger.info("No embedded standard concepts found to update")
+        
+        return updated_count, deleted_count
+        
+    except Exception as e:
+        logger.error(f"Error updating Qdrant after vocabulary import: {e}", exc_info=True)
+        return 0, 0
+
+
+def update_qdrant_atc7_metadata(vector_db, batch_size=500):
+    """Update Qdrant metadata for concepts that have ATC7 codes and are embedded"""
+    if vector_db is None:
+        return 0
+
+    try:
+        logger.info(f"Updating ATC7 metadata in collection: {vector_db.name}")
+
+        # Get all concept IDs that have ATC7 codes AND are embedded in this collection
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c_atc.concept_id 
+                FROM concept_atc7 c_atc
+                JOIN embedded_concepts ec ON c_atc.concept_id = ec.concept_id
+                WHERE ec.collection_name = %s
+                AND ec.concept_type = 'standard'
+                """,
+                (vector_db.name,)
+            )
+            concept_ids = [row[0] for row in cursor.fetchall()]
+            
+        if not concept_ids:
+            logger.info("No embedded concepts with ATC7 codes found")
+            return 0
+            
+        # Update with include_atc7=True
+        updated_count = vector_db.update_concept_metadata(
+            concept_ids, 
+            include_atc7=True,
+            batch_size=batch_size
+        )
+            
+        return updated_count
+
+    except Exception as e:
+        logger.error(f"Error updating ATC7 metadata in Qdrant: {e}", exc_info=True)
+        return 0

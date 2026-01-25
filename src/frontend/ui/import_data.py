@@ -13,6 +13,8 @@ from src.backend.db.methods.imports import (
     get_vocabulary_import_status,
     get_vocabulary_table_counts,
     check_vocabulary_files_exist,
+    update_qdrant_after_vocabulary_import,
+    update_qdrant_atc7_metadata,
 )
 from src.backend.db.methods.embeddings import get_embedding_status, reset_embeddings_status
 from src.backend.auto_mapper import init_automapper
@@ -358,19 +360,63 @@ def render_embedding_management_tab():
 
     # Batch embedding settings
     st.divider()
-    st.subheader("⚙️ Embedding Settings")
+    st.subheader("⚙️ Settings")
 
     col1, col2 = st.columns(2)
-    col1.slider(
+    batch_size = col1.slider(
         "Batch Size",
         min_value=100,
         max_value=2000,
         value=1000,
         step=10,
         key="batch_size_setting",
+        help="Number of concepts to process in a single batch. Adjust based on your system's performance."
     )
 
-    # Clear embeddings
+    # Metadata Management
+    st.divider()
+    st.subheader("🔄 Metadata Management")
+    st.markdown("Update metadata in Qdrant for the **current collection** without re-embedding vectors.")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("Sync Standard Concepts Metadata", help="Update names, domains, etc. for current collection"):
+            try:
+                with st.spinner(f"Syncing metadata for {auto_mapper.vector_store.name}..."):
+                    count, removed = update_qdrant_after_vocabulary_import(
+                        auto_mapper.vector_store,
+                        batch_size=batch_size
+                    )
+                
+                msg = []
+                if count > 0:
+                    msg.append(f"✅ Updated metadata for {count:,} concepts")
+                if removed > 0:
+                    msg.append(f"🗑️ Removed {removed:,} non-standard concepts")
+                
+                if msg:
+                    log_and_show_success("\n".join(msg))
+                else:
+                    st.info("No updates needed.")
+            except Exception as e:
+                log_and_show_error("Error syncing metadata", e)
+                
+    with col2:
+        if st.button("Sync ATC7 Codes Only", help="Update only ATC7 codes for current collection"):
+            try:
+                with st.spinner(f"Syncing ATC7 codes for {auto_mapper.vector_store.name}..."):
+                    count = update_qdrant_atc7_metadata(
+                        auto_mapper.vector_store,
+                        batch_size=batch_size
+                    )
+                
+                if count > 0:
+                    log_and_show_success(f"✅ Updated ATC7 codes for {count:,} concepts!")
+                else:
+                    st.info("No ATC7 updates needed.")
+            except Exception as e:
+                log_and_show_error("Error syncing ATC7 metadata", e)
     st.divider()
     st.subheader("🗑️ Clear Embeddings")
     st.warning("This will remove all embeddings from the vector database.")

@@ -230,3 +230,124 @@ class VectorDatabase:
         except Exception:
             logger.error(f"Error deleting collection {collection_name}", exc_info=True)
             return False
+
+    def update_concept_metadata(self, concept_ids: list[int], batch_size: int = 500, include_atc7: bool = True):
+        """
+        Update metadata for given concept IDs in Qdrant.
+        Uses batch upserts for optimal performance.
+        Returns the number of concepts updated.
+        
+        Args:
+            concept_ids: List of concept IDs to update
+            batch_size: Number of concepts to update per batch (default: 500)
+            include_atc7: Whether to include atc7_codes in metadata (default: True)
+        """
+        if not concept_ids:
+            return 0
+        
+        from src.backend.db.core import init_connection
+        
+        total_updated = 0
+        conn = init_connection()
+        
+        logger.info(f"Updating metadata for {len(concept_ids)} concepts in Qdrant...")
+        
+        # Initialize progress tracker
+        from src.backend.utils.progress import StreamlitProgressTracker
+        progress_tracker = StreamlitProgressTracker(total_count=len(concept_ids))
+        
+        try:
+            # Process in batches
+            for i in range(0, len(concept_ids), batch_size):
+                batch_ids = concept_ids[i:i + batch_size]
+                
+                # Fetch fresh concept data from database
+                with conn.cursor() as cursor:
+                    placeholders = ",".join(["%s"] * len(batch_ids))
+                    
+                    if include_atc7:
+                        cursor.execute(
+                            f"""
+                            SELECT 
+                                c.concept_id,
+                                c.concept_name,
+                                c.domain_id,
+                                c.vocabulary_id,
+                                c.concept_class_id,
+                                c.concept_code,
+                                ca.atc7_codes
+                            FROM concept c
+                            LEFT JOIN concept_atc7 ca ON c.concept_id = ca.concept_id
+                            WHERE c.concept_id IN ({placeholders})
+                            AND c.standard_concept = 'S'
+                            """,
+                            batch_ids
+                        )
+                    else:
+                        cursor.execute(
+                            f"""
+                            SELECT 
+                                c.concept_id,
+                                c.concept_name,
+                                c.domain_id,
+                                c.vocabulary_id,
+                                c.concept_class_id,
+                                c.concept_code
+                            FROM concept c
+                            WHERE c.concept_id IN ({placeholders})
+                            AND c.standard_concept = 'S'
+                            """,
+                            batch_ids
+                        )
+                    
+                    concepts = cursor.fetchall()
+                
+                # Update metadata for each concept
+                batch_updates = 0
+                for concept in concepts:
+                    if include_atc7:
+                        concept_id, concept_name, domain_id, vocabulary_id, concept_class_id, concept_code, atc7_codes = concept
+                    else:
+                        concept_id, concept_name, domain_id, vocabulary_id, concept_class_id, concept_code = concept
+                        atc7_codes = None
+                    
+                    metadata = {
+                        "concept_id": concept_id,
+                        "concept_name": concept_name,
+                        "domain_id": domain_id,
+                        "vocabulary_id": vocabulary_id,
+                        "concept_class_id": concept_class_id,
+                        "concept_code": concept_code,
+                        "type": "standard",
+                    }
+                    
+                    # Only add atc7_codes if included
+                    if include_atc7:
+                        metadata["atc7_codes"] = atc7_codes or []
+                    
+                    # Use set_payload to update only metadata without re-embedding
+                    try:
+                        self.client.set_payload(
+                            collection_name=self.name,
+                            payload={"metadata": metadata},
+                            points=[concept_id]
+                        )
+                        total_updated += 1
+                        batch_updates += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to update concept {concept_id}: {e}")
+                        continue
+                
+                # Update progress
+                progress_tracker.update(len(batch_ids))
+                logger.info(f"Updated {total_updated}/{len(concept_ids)} concepts...")
+        
+        except Exception as e:
+            logger.error(f"Error updating concept metadata in Qdrant: {e}", exc_info=True)
+        finally:
+            progress_tracker.complete("Metadata update completed!")
+        
+        logger.info(f"Successfully updated {total_updated} concept metadata in Qdrant")
+        return total_updated
+
+

@@ -69,40 +69,26 @@ def find_atc7_codes_for_drug_concepts():
     # Query to find ATC codes through relationships and ancestors
     # Fancy recursive AI written query go brrr
     atc_query = """
-        WITH RECURSIVE atc_hierarchy AS (
-            -- Find direct ATC relationships
-            SELECT DISTINCT 
-                c1.concept_id as drug_concept_id,
-                c2.concept_code as atc_code
-            FROM concept c1
-            JOIN concept_relationship cr ON c1.concept_id = cr.concept_id_1
-            JOIN concept c2 ON cr.concept_id_2 = c2.concept_id
-            WHERE c1.domain_id = 'Drug' 
-            AND c1.standard_concept = 'S'
-            AND c2.vocabulary_id = 'ATC'
-            AND cr.relationship_id IN ('Maps to', 'RxNorm has ing', 'Mapped from')
-            AND cr.invalid_reason IS NULL
-            
-            UNION
-            
-            -- Find ATC codes through concept_ancestor table
-            SELECT DISTINCT 
-                c1.concept_id as drug_concept_id,
-                c2.concept_code as atc_code
-            FROM concept c1
-            JOIN concept_ancestor ca ON c1.concept_id = ca.descendant_concept_id
-            JOIN concept c2 ON ca.ancestor_concept_id = c2.concept_id
-            WHERE c1.domain_id = 'Drug' 
-            AND c1.standard_concept = 'S'
-            AND c2.vocabulary_id = 'ATC'
-            AND LENGTH(c2.concept_code) = 7
-        )
         SELECT 
-            drug_concept_id,
-            ARRAY_AGG(DISTINCT atc_code) as atc7_codes
-        FROM atc_hierarchy 
-        WHERE LENGTH(atc_code) = 7
-        GROUP BY drug_concept_id
+            c_drug.concept_id AS drug_concept_id,
+            ARRAY_AGG(DISTINCT c_atc.concept_code) AS atc_codes
+        FROM concept c_drug
+        JOIN concept_ancestor ca 
+            ON c_drug.concept_id = ca.descendant_concept_id
+        JOIN concept c_atc 
+            ON ca.ancestor_concept_id = c_atc.concept_id
+        WHERE 
+            -- 1. Define the Drug side
+            c_drug.domain_id = 'Drug'
+            AND c_drug.standard_concept = 'S'
+            
+            -- 2. Define the ATC side
+            AND c_atc.vocabulary_id = 'ATC'
+            
+            -- 3. Filter for specific ATC level. 
+            AND LENGTH(c_atc.concept_code) = 7 
+        GROUP BY 
+            c_drug.concept_id
     """
 
     results = []
