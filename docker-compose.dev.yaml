@@ -1,0 +1,83 @@
+name: omop-automapper-dev
+services:
+  postgres-db:
+    image: postgres:15
+    restart: always
+    env_file: .env
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5455:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./vocabulary:/app/vocabulary # Mount vocabulary directory
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: False
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: False
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    env_file: .env
+    environment:
+      # Development mode settings
+      PYTHONUNBUFFERED: 1
+      PYTHONDONTWRITEBYTECODE: 1
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    volumes:
+      # Mount source code for hot-reload (no container restart needed!)
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./vocabulary:/app/vocabulary
+      # Exclude Python cache files
+      - /app/src/__pycache__
+    # Override command with development-friendly settings
+    command: >
+      sh -c "python -m src.backend.cli.setup_db &&
+             streamlit run src/frontend/main.py 
+             --server.address 0.0.0.0 
+             --server.port 8501 
+             --server.runOnSave true 
+             --server.fileWatcherType auto
+             --logger.level debug"
+
+volumes:
+  pgdata:
+  qdrant_data:
+  pgadmin_data:
