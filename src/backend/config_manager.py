@@ -28,7 +28,7 @@ class ConfigManager:
             "vector_store.embeddings": "text-embedding-3-large",
             "vector_store.dims": "1024",
             "vector_store.url": "http://qdrant:6333",
-            "reranker.model": "gpt-4.1",
+            "reranker.model": "gpt-5-mini",
         }
 
         set_default_config(defaults)
@@ -64,17 +64,83 @@ class ConfigManager:
 
         self.clear_config_info_cache()
 
+    @st.cache_data(ttl=3600)
+    def _fetch_models_from_api(_self) -> list:
+        """Fetch all available models from OpenAI API"""
+        import os
+        from openai import OpenAI
+        
+        try:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                logger.warning("No OPENAI_API_KEY set, using default models")
+                return []
+                
+            client = OpenAI(api_key=api_key)
+            models = client.models.list()
+            return [m.id for m in models.data]
+        except Exception as e:
+            logger.warning(f"Failed to fetch models from API: {e}")
+            return []
+
     def get_embedding_models(self):
-        return {"text-embedding-3-small": 1536, "text-embedding-3-large": 3072}
+        """Get available embedding models and their dimensions"""
+        
+        # Known embedding models and their max supported dimensions
+        known_models = {
+            "text-embedding-3-small": 1536,
+            "text-embedding-3-large": 3072,
+            "text-embedding-ada-002": 1536,
+        }
+        
+        fetched_models = self._fetch_models_from_api()
+        
+        if fetched_models:
+            # Filter known models that are available in API
+            available = {
+                m: known_models[m] 
+                for m in known_models 
+                if m in fetched_models
+            }
+            # If we found matches, return those
+            if available:
+                return available
+        
+        # Fallback to defaults
+        return {
+            "text-embedding-3-small": 1536, 
+            "text-embedding-3-large": 3072
+        }
 
     def get_llm_models(self):
-        return [
-            "gpt-5",
+        """Get available LLM models (starting with gpt)"""
+        fetched_models = self._fetch_models_from_api()
+        
+        # Priority/Custom models that should always be available
+        priority_models = [
             "gpt-5-mini",
-            "gpt-5-nano",
+            "gpt-4o",
+            "gpt-4-turbo",
+        ]
+        
+        if fetched_models:
+            # Filter for text generation models (gpt-*)
+            fetched_gpt = [m for m in fetched_models if m.startswith("gpt")]
+            fetched_gpt.sort(reverse=True)
+            
+            # Filter out models already in priority list to avoid duplication
+            others = [m for m in fetched_gpt if m not in priority_models]
+            
+            return priority_models + others
+        
+        # Fallback list if API fails
+        return [
+            "gpt-5-mini",
+            "gpt-4o",
+            "gpt-4-turbo",
+            "gpt-4",
             "gpt-4.1",
-            "gpt-4.1-mini",
-            "gpt-4.1-nano",
+            "gpt-3.5-turbo",
         ]
 
     def create_new_collection_name(self, embedding_model: str, dims: int) -> str:
@@ -103,6 +169,7 @@ class ConfigManager:
 
     def clear_config_info_cache(self):
         self.get_config.clear()
+        self._fetch_models_from_api.clear()
 
 
 # Global config manager instance
